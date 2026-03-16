@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=My Product
+Comment=A v3ref application
+# The Exec line includes %u to pass the URL to the application
+Exec=/usr/local/bin/v3ref %u
+Terminal=false
+Type=Application
+Icon=v3ref
+Categories=Utility;
+StartupWMClass=v3ref
+
+ 

@@ -1,0 +1,53 @@
+# Build artifacts
+build/bin/
+build/windows/installer/tmp/
+bin/
+frontend/dist/
+frontend/node_modules/
+node_modules/
+extratos-app
+
+# Wails v3
+.task/
+
+# IDE / editor
+.coder/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# SQLite databases (user data)
+*.db
+*.db-wal
+*.db-shm
+
+# Personal bank statement files (never commit these)
+*.csv
+*.xls
+*.xlsx
+!testdata/**
+
+# Binary / installer artifacts
+*.exe
+*.app
+*.pkg
+*.tar.gz
+*.zip
+*.deb
+*.rpm
+
+# Go
+*.test
+*.out
+coverage.txt
+
+# Environment / secrets
+.env
+.env.*
+credentials*

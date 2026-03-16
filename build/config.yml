@@ -1,0 +1,41 @@
+version: '3'
+
+info:
+  companyName: "Fabio C. Canesin"
+  productName: "Extratos"
+  productIdentifier: "com.canesin.extratos"
+  description: "Extrato bancário viewer with full-text search"
+  copyright: "(c) 2025, Fabio C. Canesin"
+  comments: "Bank statement viewer and search tool"
+  version: "1.0.0"
+
+dev_mode:
+  root_path: .
+  log_level: warn
+  debounce: 1000
+  ignore:
+    dir:
+      - .git
+      - node_modules
+      - frontend
+      - bin
+    file:
+      - .DS_Store
+      - .gitignore
+      - .gitkeep
+    watched_extension:
+      - "*.go"
+      - "*.js"
+      - "*.ts"
+    git_ignore: true
+  executes:
+    - cmd: wails3 build DEV=true
+      type: blocking
+    - cmd: wails3 task common:dev:frontend
+      type: background
+    - cmd: wails3 task run
+      type: primary
+
+fileAssociations: []
+
+other: []
