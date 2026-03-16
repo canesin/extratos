@@ -6,6 +6,7 @@ import {
   FilePreview,
   DBInfo,
   ClauseSummary,
+  MonthlySummary,
 } from "../bindings/extratos-app";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -567,6 +568,14 @@ function MainScreen({ onSwitchDB }: { onSwitchDB: () => void }) {
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [dbName, setDbName] = useState("");
 
+  // Date range filter state
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+
+  // Monthly summary state
+  const [showMonthly, setShowMonthly] = useState(false);
+  const [monthlySummary, setMonthlySummary] = useState<MonthlySummary[]>([]);
+
   // Import preview state
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(
     null
@@ -581,15 +590,15 @@ function MainScreen({ onSwitchDB }: { onSwitchDB: () => void }) {
     setStats(s as Stats);
   }, []);
 
-  const doSearch = useCallback(async (q: string, p: number) => {
+  const doSearch = useCallback(async (q: string, p: number, df: string = dateFrom, dt: string = dateTo) => {
     setLoading(true);
     try {
-      const r = await AppService.Search(q, PAGE_SIZE, p * PAGE_SIZE);
+      const r = await AppService.SearchFiltered(q, PAGE_SIZE, p * PAGE_SIZE, df, dt);
       if (r) setResults(r);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [dateFrom, dateTo]);
 
   useEffect(() => {
     AppService.GetDBError().then((err: string) => {
@@ -606,6 +615,15 @@ function MainScreen({ onSwitchDB }: { onSwitchDB: () => void }) {
     setSortKey(null);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => doSearch(value, 0), 250);
+  };
+
+  const onDateChange = (df: string, dt: string) => {
+    setDateFrom(df);
+    setDateTo(dt);
+    setPage(0);
+    setSortKey(null);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => doSearch(query, 0, df, dt), 250);
   };
 
   // --- Import preview flow ---
@@ -663,6 +681,13 @@ function MainScreen({ onSwitchDB }: { onSwitchDB: () => void }) {
     AppService.CancelImport();
     setImportPreview(null);
   };
+
+  // Load monthly summary when toggled or search results change
+  useEffect(() => {
+    if (showMonthly) {
+      AppService.GetMonthlySummary(query, dateFrom, dateTo).then(setMonthlySummary);
+    }
+  }, [showMonthly, results, query, dateFrom, dateTo]);
 
   const handleExport = async () => {
     setExporting(true);
@@ -792,8 +817,39 @@ function MainScreen({ onSwitchDB }: { onSwitchDB: () => void }) {
             {results.total.toLocaleString("pt-BR")} resultado
             {results.total !== 1 ? "s" : ""}
           </span>
+          <Input type="date" value={dateFrom} onChange={(e) => onDateChange(e.target.value, dateTo)} className="w-36 h-10" />
+          <span className="text-muted-foreground text-sm">a</span>
+          <Input type="date" value={dateTo} onChange={(e) => onDateChange(dateFrom, e.target.value)} className="w-36 h-10" />
+          {(dateFrom || dateTo) && (
+            <button onClick={() => onDateChange("", "")} className="text-muted-foreground hover:text-foreground cursor-pointer" title="Limpar datas">&#x2715;</button>
+          )}
         </div>
       </div>
+
+      {/* Bank/account quick filter */}
+      {stats && ((stats.banks && stats.banks.length > 1) || (stats.accounts && stats.accounts.length > 1)) && (
+        <div className="px-6 py-1.5 bg-white border-b flex items-center gap-2 flex-wrap">
+          <span className="text-xs text-muted-foreground mr-1">Filtrar:</span>
+          {stats.banks?.map(b => (
+            <button key={b} onClick={() => onQueryChange(b)}
+              className={`text-xs px-2 py-0.5 rounded border cursor-pointer transition-colors ${query === b ? 'bg-foreground text-white border-foreground' : 'hover:bg-muted/50 border-border'}`}>
+              {b}
+            </button>
+          ))}
+          {stats.accounts && stats.accounts.length > 1 && stats.accounts.map(a => (
+            <button key={a} onClick={() => onQueryChange(a)}
+              className={`text-xs px-2 py-0.5 rounded border cursor-pointer transition-colors ${query === a ? 'bg-foreground text-white border-foreground' : 'hover:bg-muted/50 border-border'}`}>
+              {a}
+            </button>
+          ))}
+          {query && (
+            <button onClick={() => onQueryChange("")}
+              className="text-xs text-muted-foreground hover:text-foreground cursor-pointer ml-1">
+              Limpar
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Overall summary bar */}
       {results.total > 0 && (
@@ -830,6 +886,43 @@ function MainScreen({ onSwitchDB }: { onSwitchDB: () => void }) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Monthly summary toggle */}
+      {results.total > 0 && (
+        <>
+          <div className="mx-6 mt-2 flex justify-end">
+            <button onClick={() => setShowMonthly(!showMonthly)} className="text-xs text-muted-foreground hover:text-foreground cursor-pointer">
+              {showMonthly ? "Ocultar resumo mensal" : "Resumo mensal \u25BE"}
+            </button>
+          </div>
+          {showMonthly && monthlySummary.length > 0 && (
+            <div className="mx-6 mt-2 rounded-lg border bg-white overflow-auto max-h-72">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-muted/80 backdrop-blur-sm">
+                  <tr>
+                    <th className="text-left py-2 px-3 font-medium text-muted-foreground">M&#xEA;s</th>
+                    <th className="text-right py-2 px-3 font-medium text-muted-foreground">Transa&#xE7;&#xF5;es</th>
+                    <th className="text-right py-2 px-3 font-medium text-muted-foreground">Cr&#xE9;ditos</th>
+                    <th className="text-right py-2 px-3 font-medium text-muted-foreground">D&#xE9;bitos</th>
+                    <th className="text-right py-2 px-3 font-medium text-muted-foreground">Saldo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {monthlySummary.map((ms) => (
+                    <tr key={ms.month} className="border-t border-border/50 hover:bg-muted/50 transition-colors">
+                      <td className="py-1.5 px-3 font-mono">{ms.month}</td>
+                      <td className="py-1.5 px-3 text-right">{ms.count}</td>
+                      <td className="py-1.5 px-3 text-right text-green-700 font-mono">{formatBRL(ms.total_credit)}</td>
+                      <td className="py-1.5 px-3 text-right text-red-700 font-mono">{formatBRL(ms.total_debit)}</td>
+                      <td className={`py-1.5 px-3 text-right font-mono font-semibold ${ms.net_amount >= 0 ? "text-green-700" : "text-red-700"}`}>{formatBRL(ms.net_amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
       )}
 
       {/* Per-clause summaries */}

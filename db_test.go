@@ -520,6 +520,154 @@ func TestBuildFilePreview(t *testing.T) {
 	}
 }
 
+func TestSearchFiltered_DateRange(t *testing.T) {
+	db := newTestDB(t)
+	db.InsertTransactions(sampleTransactions())
+
+	// No date filter — should return all 3
+	r1, err := db.SearchFiltered("", 100, 0, "", "")
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if r1.Total != 3 {
+		t.Errorf("no filter: expected 3 total, got %d", r1.Total)
+	}
+
+	// dateFrom only — from 2026-01-12 onwards should include 2 transactions
+	r2, err := db.SearchFiltered("", 100, 0, "2026-01-12", "")
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if r2.Total != 2 {
+		t.Errorf("dateFrom 2026-01-12: expected 2 total, got %d", r2.Total)
+	}
+
+	// dateTo only — up to 2026-01-12 should include 2 transactions
+	r3, err := db.SearchFiltered("", 100, 0, "", "2026-01-12")
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if r3.Total != 2 {
+		t.Errorf("dateTo 2026-01-12: expected 2 total, got %d", r3.Total)
+	}
+
+	// Both dates — exactly Jan 2026
+	r4, err := db.SearchFiltered("", 100, 0, "2026-01-01", "2026-01-31")
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if r4.Total != 2 {
+		t.Errorf("Jan 2026: expected 2 total, got %d", r4.Total)
+	}
+	// Aggregates should only include the 2 January transactions
+	if r4.TotalCredit != 0 {
+		t.Errorf("Jan 2026 credit: expected 0, got %f", r4.TotalCredit)
+	}
+	if r4.TotalDebit != -8815.00 {
+		t.Errorf("Jan 2026 debit: expected -8815, got %f", r4.TotalDebit)
+	}
+
+	// Date filter + FTS query
+	r5, err := db.SearchFiltered("Fernanda", 100, 0, "2026-01-01", "2026-01-31")
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if r5.Total != 1 {
+		t.Errorf("Fernanda in Jan: expected 1 total, got %d", r5.Total)
+	}
+
+	// Date filter that excludes all results
+	r6, err := db.SearchFiltered("Fernanda", 100, 0, "2026-03-01", "2026-03-31")
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if r6.Total != 0 {
+		t.Errorf("Fernanda in Mar: expected 0 total, got %d", r6.Total)
+	}
+
+	// Multi-term with date filter — clause summaries should also be filtered
+	r7, err := db.SearchFiltered("Fernanda, Brla", 100, 0, "2026-01-01", "2026-01-31")
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if r7.Total != 1 {
+		t.Errorf("Fernanda,Brla in Jan: expected 1 total, got %d", r7.Total)
+	}
+	if len(r7.ClauseSummaries) != 2 {
+		t.Fatalf("expected 2 clause summaries, got %d", len(r7.ClauseSummaries))
+	}
+	// Fernanda clause should have 1 result
+	if r7.ClauseSummaries[0].Total != 1 {
+		t.Errorf("Fernanda clause in Jan: expected 1, got %d", r7.ClauseSummaries[0].Total)
+	}
+	// Brla clause should have 0 results (it's in Feb)
+	if r7.ClauseSummaries[1].Total != 0 {
+		t.Errorf("Brla clause in Jan: expected 0, got %d", r7.ClauseSummaries[1].Total)
+	}
+}
+
+func TestGetMonthlySummary(t *testing.T) {
+	db := newTestDB(t)
+	db.InsertTransactions(sampleTransactions())
+
+	// All months, no filter
+	summaries, err := db.GetMonthlySummary("", "", "")
+	if err != nil {
+		t.Fatalf("monthly summary: %v", err)
+	}
+	if len(summaries) != 2 {
+		t.Fatalf("expected 2 months, got %d", len(summaries))
+	}
+
+	// Results ordered DESC by month
+	if summaries[0].Month != "2026-02" {
+		t.Errorf("first month: expected 2026-02, got %s", summaries[0].Month)
+	}
+	if summaries[1].Month != "2026-01" {
+		t.Errorf("second month: expected 2026-01, got %s", summaries[1].Month)
+	}
+
+	// Feb: 1 transaction (Brla credit)
+	if summaries[0].Count != 1 {
+		t.Errorf("Feb count: expected 1, got %d", summaries[0].Count)
+	}
+	if summaries[0].TotalCredit != 2103576.88 {
+		t.Errorf("Feb credit: expected 2103576.88, got %f", summaries[0].TotalCredit)
+	}
+
+	// Jan: 2 transactions (both debits)
+	if summaries[1].Count != 2 {
+		t.Errorf("Jan count: expected 2, got %d", summaries[1].Count)
+	}
+	if summaries[1].TotalDebit != -8815.00 {
+		t.Errorf("Jan debit: expected -8815, got %f", summaries[1].TotalDebit)
+	}
+
+	// With FTS query
+	summaries2, err := db.GetMonthlySummary("Fernanda", "", "")
+	if err != nil {
+		t.Fatalf("monthly summary with query: %v", err)
+	}
+	if len(summaries2) != 1 {
+		t.Fatalf("expected 1 month for Fernanda, got %d", len(summaries2))
+	}
+	if summaries2[0].Month != "2026-01" {
+		t.Errorf("Fernanda month: expected 2026-01, got %s", summaries2[0].Month)
+	}
+
+	// With date filter
+	summaries3, err := db.GetMonthlySummary("", "2026-02-01", "2026-02-28")
+	if err != nil {
+		t.Fatalf("monthly summary with dates: %v", err)
+	}
+	if len(summaries3) != 1 {
+		t.Fatalf("expected 1 month for Feb filter, got %d", len(summaries3))
+	}
+	if summaries3[0].Month != "2026-02" {
+		t.Errorf("Feb filter month: expected 2026-02, got %s", summaries3[0].Month)
+	}
+}
+
 func TestBuildFTSQuery(t *testing.T) {
 	tests := []struct {
 		input    string

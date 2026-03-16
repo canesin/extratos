@@ -424,51 +424,120 @@ func buildSingleFTSClause(term string) string {
 	return `"` + normalized + `"`
 }
 
+// MonthlySummary holds aggregate stats grouped by month.
+type MonthlySummary struct {
+	Month       string  `json:"month"`       // "2026-03"
+	Count       int     `json:"count"`
+	TotalCredit float64 `json:"total_credit"`
+	TotalDebit  float64 `json:"total_debit"`
+	NetAmount   float64 `json:"net_amount"`
+}
+
+// buildFilterClause builds WHERE conditions and args for optional FTS query and date range.
+// Returns the WHERE clause (including "WHERE" keyword if non-empty) and the args slice.
+// The ftsMode parameter controls how FTS is joined:
+//   - "subquery": uses `id IN (SELECT rowid FROM transactions_fts WHERE transactions_fts MATCH ?)`
+//   - "": no FTS filter (query is empty or not needed)
+func buildFilterClause(ftsQuery, dateFrom, dateTo string) (where string, args []interface{}) {
+	var conditions []string
+
+	if ftsQuery != "" {
+		conditions = append(conditions, `id IN (SELECT rowid FROM transactions_fts WHERE transactions_fts MATCH ?)`)
+		args = append(args, ftsQuery)
+	}
+	if dateFrom != "" {
+		conditions = append(conditions, `date >= ?`)
+		args = append(args, dateFrom)
+	}
+	if dateTo != "" {
+		conditions = append(conditions, `date <= ?`)
+		args = append(args, dateTo)
+	}
+
+	if len(conditions) > 0 {
+		where = " WHERE " + strings.Join(conditions, " AND ")
+	}
+	return
+}
+
 func (db *DB) Search(query string, limit, offset int) (*SearchResult, error) {
+	return db.SearchFiltered(query, limit, offset, "", "")
+}
+
+func (db *DB) SearchFiltered(query string, limit, offset int, dateFrom, dateTo string) (*SearchResult, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 
 	result := &SearchResult{Transactions: []Transaction{}}
 
-	if query == "" {
-		// No filter — all transactions, but sums exclude internal banking movements
-		db.conn.QueryRow(`SELECT ` + aggCols + ` FROM transactions`).
-			Scan(&result.Total, &result.TotalCredit, &result.TotalDebit, &result.NetAmount, &result.MinDate, &result.MaxDate)
-
-		rows, err := db.conn.Query(`SELECT id, date, description, doc, credit, debit, balance, amount, account, bank, source_file
-			FROM transactions ORDER BY date DESC, id DESC LIMIT ? OFFSET ?`, limit, offset)
-		if err != nil {
-			return nil, err
+	ftsQuery := ""
+	if query != "" {
+		ftsQuery = buildFTSQuery(query)
+		if ftsQuery == "" {
+			return result, nil
 		}
-		defer rows.Close()
-		for rows.Next() {
-			var t Transaction
-			if err := rows.Scan(&t.ID, &t.Date, &t.Description, &t.Doc, &t.Credit, &t.Debit, &t.Balance, &t.Amount, &t.Account, &t.Bank, &t.SourceFile); err != nil {
-				return nil, err
-			}
-			result.Transactions = append(result.Transactions, t)
-		}
-		return result, rows.Err()
 	}
 
-	ftsQuery := buildFTSQuery(query)
-	if ftsQuery == "" {
-		return result, nil
-	}
+	where, args := buildFilterClause(ftsQuery, dateFrom, dateTo)
 
 	// Aggregates over all matching rows, sums exclude internal banking movements
-	db.conn.QueryRow(`SELECT `+aggCols+`
-		FROM transactions WHERE id IN (SELECT rowid FROM transactions_fts WHERE transactions_fts MATCH ?)`, ftsQuery).
+	db.conn.QueryRow(`SELECT `+aggCols+` FROM transactions`+where, args...).
 		Scan(&result.Total, &result.TotalCredit, &result.TotalDebit, &result.NetAmount, &result.MinDate, &result.MaxDate)
 
-	// Paginated results
-	rows, err := db.conn.Query(`SELECT t.id, t.date, t.description, t.doc, t.credit, t.debit, t.balance, t.amount, t.account, t.bank, t.source_file
-		FROM transactions t
-		INNER JOIN transactions_fts fts ON t.id = fts.rowid
-		WHERE transactions_fts MATCH ?
-		ORDER BY t.date DESC, t.id DESC
-		LIMIT ? OFFSET ?`, ftsQuery, limit, offset)
+	// Paginated results — need to alias table for the JOIN case
+	var paginatedQuery string
+	var paginatedArgs []interface{}
+
+	if ftsQuery != "" {
+		// Build date conditions separately for the JOIN query
+		var dateConditions []string
+		var dateArgs []interface{}
+		if dateFrom != "" {
+			dateConditions = append(dateConditions, `t.date >= ?`)
+			dateArgs = append(dateArgs, dateFrom)
+		}
+		if dateTo != "" {
+			dateConditions = append(dateConditions, `t.date <= ?`)
+			dateArgs = append(dateArgs, dateTo)
+		}
+
+		whereClause := `WHERE transactions_fts MATCH ?`
+		paginatedArgs = append(paginatedArgs, ftsQuery)
+		if len(dateConditions) > 0 {
+			whereClause += " AND " + strings.Join(dateConditions, " AND ")
+			paginatedArgs = append(paginatedArgs, dateArgs...)
+		}
+
+		paginatedQuery = `SELECT t.id, t.date, t.description, t.doc, t.credit, t.debit, t.balance, t.amount, t.account, t.bank, t.source_file
+			FROM transactions t
+			INNER JOIN transactions_fts fts ON t.id = fts.rowid
+			` + whereClause + `
+			ORDER BY t.date DESC, t.id DESC
+			LIMIT ? OFFSET ?`
+	} else {
+		var dateConditions []string
+		if dateFrom != "" {
+			dateConditions = append(dateConditions, `date >= ?`)
+			paginatedArgs = append(paginatedArgs, dateFrom)
+		}
+		if dateTo != "" {
+			dateConditions = append(dateConditions, `date <= ?`)
+			paginatedArgs = append(paginatedArgs, dateTo)
+		}
+
+		whereClause := ""
+		if len(dateConditions) > 0 {
+			whereClause = " WHERE " + strings.Join(dateConditions, " AND ")
+		}
+
+		paginatedQuery = `SELECT id, date, description, doc, credit, debit, balance, amount, account, bank, source_file
+			FROM transactions` + whereClause + ` ORDER BY date DESC, id DESC LIMIT ? OFFSET ?`
+	}
+
+	paginatedArgs = append(paginatedArgs, limit, offset)
+
+	rows, err := db.conn.Query(paginatedQuery, paginatedArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -493,16 +562,54 @@ func (db *DB) Search(query string, limit, offset int) (*SearchResult, error) {
 			if fts == "" {
 				continue
 			}
+			clauseWhere, clauseArgs := buildFilterClause(fts, dateFrom, dateTo)
 			var cs ClauseSummary
 			cs.Clause = clause
-			db.conn.QueryRow(`SELECT `+aggCols+`
-				FROM transactions WHERE id IN (SELECT rowid FROM transactions_fts WHERE transactions_fts MATCH ?)`, fts).
+			db.conn.QueryRow(`SELECT `+aggCols+` FROM transactions`+clauseWhere, clauseArgs...).
 				Scan(&cs.Total, &cs.TotalCredit, &cs.TotalDebit, &cs.NetAmount, &cs.MinDate, &cs.MaxDate)
 			result.ClauseSummaries = append(result.ClauseSummaries, cs)
 		}
 	}
 
 	return result, nil
+}
+
+func (db *DB) GetMonthlySummary(query string, dateFrom, dateTo string) ([]MonthlySummary, error) {
+	ftsQuery := ""
+	if query != "" {
+		ftsQuery = buildFTSQuery(query)
+		if ftsQuery == "" {
+			return nil, nil
+		}
+	}
+
+	where, args := buildFilterClause(ftsQuery, dateFrom, dateTo)
+
+	sql := fmt.Sprintf(`SELECT
+		substr(date, 1, 7) as month,
+		COUNT(*),
+		COALESCE(SUM(CASE WHEN %[1]s THEN credit END), 0),
+		COALESCE(SUM(CASE WHEN %[1]s THEN debit END), 0),
+		COALESCE(SUM(CASE WHEN %[1]s THEN amount END), 0)
+		FROM transactions%s
+		GROUP BY substr(date, 1, 7)
+		ORDER BY month DESC`, externalFilter, where)
+
+	rows, err := db.conn.Query(sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var summaries []MonthlySummary
+	for rows.Next() {
+		var ms MonthlySummary
+		if err := rows.Scan(&ms.Month, &ms.Count, &ms.TotalCredit, &ms.TotalDebit, &ms.NetAmount); err != nil {
+			return nil, err
+		}
+		summaries = append(summaries, ms)
+	}
+	return summaries, rows.Err()
 }
 
 func (db *DB) GetStats() (map[string]interface{}, error) {

@@ -251,6 +251,28 @@ func (a *AppService) Search(query string, limit, offset int) *SearchResult {
 	return result
 }
 
+func (a *AppService) SearchFiltered(query string, limit, offset int, dateFrom, dateTo string) *SearchResult {
+	if a.db == nil {
+		return &SearchResult{Transactions: []Transaction{}, Total: 0}
+	}
+	result, err := a.db.SearchFiltered(query, limit, offset, dateFrom, dateTo)
+	if err != nil {
+		return &SearchResult{Transactions: []Transaction{}, Total: 0}
+	}
+	return result
+}
+
+func (a *AppService) GetMonthlySummary(query string, dateFrom, dateTo string) []MonthlySummary {
+	if a.db == nil {
+		return []MonthlySummary{}
+	}
+	summaries, err := a.db.GetMonthlySummary(query, dateFrom, dateTo)
+	if err != nil {
+		return []MonthlySummary{}
+	}
+	return summaries
+}
+
 func (a *AppService) GetStats() map[string]any {
 	if a.db == nil {
 		return map[string]any{"error": a.dbError}
