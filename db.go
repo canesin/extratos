@@ -435,9 +435,7 @@ type MonthlySummary struct {
 
 // buildFilterClause builds WHERE conditions and args for optional FTS query and date range.
 // Returns the WHERE clause (including "WHERE" keyword if non-empty) and the args slice.
-// The ftsMode parameter controls how FTS is joined:
-//   - "subquery": uses `id IN (SELECT rowid FROM transactions_fts WHERE transactions_fts MATCH ?)`
-//   - "": no FTS filter (query is empty or not needed)
+// When ftsQuery is non-empty, FTS is applied via a subquery on transactions_fts.
 func buildFilterClause(ftsQuery, dateFrom, dateTo string) (where string, args []interface{}) {
 	var conditions []string
 
@@ -516,23 +514,11 @@ func (db *DB) SearchFiltered(query string, limit, offset int, dateFrom, dateTo s
 			ORDER BY t.date DESC, t.id DESC
 			LIMIT ? OFFSET ?`
 	} else {
-		var dateConditions []string
-		if dateFrom != "" {
-			dateConditions = append(dateConditions, `date >= ?`)
-			paginatedArgs = append(paginatedArgs, dateFrom)
-		}
-		if dateTo != "" {
-			dateConditions = append(dateConditions, `date <= ?`)
-			paginatedArgs = append(paginatedArgs, dateTo)
-		}
-
-		whereClause := ""
-		if len(dateConditions) > 0 {
-			whereClause = " WHERE " + strings.Join(dateConditions, " AND ")
-		}
-
+		// No FTS — reuse buildFilterClause (date-only conditions)
+		dateWhere, dateArgs := buildFilterClause("", dateFrom, dateTo)
+		paginatedArgs = append(paginatedArgs, dateArgs...)
 		paginatedQuery = `SELECT id, date, description, doc, credit, debit, balance, amount, account, bank, source_file
-			FROM transactions` + whereClause + ` ORDER BY date DESC, id DESC LIMIT ? OFFSET ?`
+			FROM transactions` + dateWhere + ` ORDER BY date DESC, id DESC LIMIT ? OFFSET ?`
 	}
 
 	paginatedArgs = append(paginatedArgs, limit, offset)
@@ -591,7 +577,7 @@ func (db *DB) GetMonthlySummary(query string, dateFrom, dateTo string) ([]Monthl
 		COALESCE(SUM(CASE WHEN %[1]s THEN credit END), 0),
 		COALESCE(SUM(CASE WHEN %[1]s THEN debit END), 0),
 		COALESCE(SUM(CASE WHEN %[1]s THEN amount END), 0)
-		FROM transactions%s
+		FROM transactions%[2]s
 		GROUP BY substr(date, 1, 7)
 		ORDER BY month DESC`, externalFilter, where)
 

@@ -606,8 +606,12 @@ function MainScreen({ onSwitchDB }: { onSwitchDB: () => void }) {
     });
     AppService.GetCurrentDB().then((name: string) => setDbName(name));
     loadStats();
-    doSearch("", 0);
-  }, [loadStats, doSearch]);
+    // Initial load — call API directly to avoid depending on doSearch
+    // (doSearch changes when dateFrom/dateTo change, which would re-trigger this effect)
+    AppService.SearchFiltered("", PAGE_SIZE, 0, "", "").then(r => {
+      if (r) setResults(r);
+    });
+  }, [loadStats]);
 
   const onQueryChange = (value: string) => {
     setQuery(value);
