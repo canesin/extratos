@@ -168,7 +168,7 @@ func (a *AppService) PreviewImport() *ImportPreview {
 	app := application.Get()
 	paths, err := app.Dialog.OpenFile().
 		SetTitle("Selecionar extratos").
-		AddFilter("Extratos (CSV/TXT/XLS)", "*.csv;*.txt;*.xls;*.CSV;*.TXT;*.XLS").
+		AddFilter("Extratos (CSV/TXT/XLS/OFX)", "*.csv;*.txt;*.xls;*.ofx;*.CSV;*.TXT;*.XLS;*.OFX").
 		PromptForMultipleSelection()
 	if err != nil || len(paths) == 0 {
 		return nil

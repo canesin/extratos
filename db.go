@@ -16,7 +16,7 @@ const schemaVersion = 2
 
 // externalFilter is the SQL condition excluding internal banking movements
 // (investment applications/redemptions) from aggregate sums.
-// Covers both Bradesco and Itaú patterns.
+// Covers Bradesco, Itaú, Banco do Brasil, Caixa, and Nubank patterns.
 const externalFilter = `description NOT LIKE 'Resgate Inv%' ` +
 	`AND description NOT LIKE 'Resg.autom%' ` +
 	`AND description NOT LIKE 'Resg/vencto%' ` +
@@ -27,7 +27,18 @@ const externalFilter = `description NOT LIKE 'Resgate Inv%' ` +
 	`AND description NOT LIKE 'Aplicacao Inve%' ` +
 	`AND description NOT LIKE 'REND PAGO APLIC AUT%' ` +
 	`AND description NOT LIKE 'RESGATE CDB%' ` +
-	`AND description NOT LIKE 'APLICACAO CDB%'`
+	`AND description NOT LIKE 'APLICACAO CDB%' ` +
+	// Banco do Brasil
+	`AND description NOT LIKE 'APLICACAO POUPANCA%' ` +
+	`AND description NOT LIKE 'RESGATE POUPANCA%' ` +
+	`AND description NOT LIKE 'APLICACAO FUNDOS%' ` +
+	`AND description NOT LIKE 'RESGATE FUNDOS%' ` +
+	// Caixa
+	`AND description NOT LIKE 'APL POUP%' ` +
+	`AND description NOT LIKE 'RES POUP%' ` +
+	// Nubank
+	`AND description NOT LIKE 'Aplicação RDB%' ` +
+	`AND description NOT LIKE 'Resgate RDB%'`
 
 // aggCols is the SELECT columns for aggregate queries,
 // counting all rows but summing only external (non-internal) transactions.
@@ -39,7 +50,7 @@ var aggCols = fmt.Sprintf(`COUNT(*),
 	COALESCE(MAX(date),'')`, externalFilter)
 
 // internalPrefixes lists description prefixes for internal banking movements.
-// Covers both Bradesco and Itaú patterns.
+// Covers Bradesco, Itaú, Banco do Brasil, Caixa, and Nubank patterns.
 var internalPrefixes = []string{
 	// Bradesco
 	"Resgate Inv",
@@ -54,6 +65,17 @@ var internalPrefixes = []string{
 	"REND PAGO APLIC AUT",
 	"RESGATE CDB",
 	"APLICACAO CDB",
+	// Banco do Brasil
+	"APLICACAO POUPANCA",
+	"RESGATE POUPANCA",
+	"APLICACAO FUNDOS",
+	"RESGATE FUNDOS",
+	// Caixa
+	"APL POUP",
+	"RES POUP",
+	// Nubank
+	"Aplicação RDB",
+	"Resgate RDB",
 }
 
 // IsInternalTransfer returns true if the description indicates an internal
