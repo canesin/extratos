@@ -500,20 +500,13 @@ func ParseFile(path string) (*ParseResult, error) {
 
 	filename := filepath.Base(path)
 
-	// .ofx extension can bypass detection
-	if ext == ".ofx" {
-		txns := ParseOFX(raw, filename)
-		bank := "OFX"
-		if len(txns) > 0 {
-			bank = txns[0].Bank
-		}
-		return &ParseResult{
-			Transactions: txns,
-			Bank:         bank,
-		}, nil
+	format := DetectFormat(raw)
+
+	// .ofx extension as fallback when content detection doesn't match
+	if format == FormatUnknown && ext == ".ofx" {
+		format = FormatOFX
 	}
 
-	format := DetectFormat(raw)
 	var txns []Transaction
 
 	switch format {
@@ -523,23 +516,21 @@ func ParseFile(path string) (*ParseResult, error) {
 		txns = ParseItau(raw, filename)
 	case FormatOFX:
 		txns = ParseOFX(raw, filename)
-		bank := "OFX"
-		if len(txns) > 0 {
-			bank = txns[0].Bank
-		}
-		return &ParseResult{
-			Transactions: txns,
-			Bank:         bank,
-		}, nil
 	case FormatNubank:
 		txns = ParseNubank(raw, filename)
 	default:
 		return &ParseResult{Error: "Formato não reconhecido. Suporta: Bradesco, Itaú, OFX, Nubank"}, nil
 	}
 
+	// OFX bank name comes from file content, not the format constant
+	bank := string(format)
+	if format == FormatOFX && len(txns) > 0 {
+		bank = txns[0].Bank
+	}
+
 	return &ParseResult{
 		Transactions: txns,
-		Bank:         string(format),
+		Bank:         bank,
 	}, nil
 }
 
@@ -569,14 +560,13 @@ func decodeToUTF8Windows1252(raw []byte) string {
 // For "<TAG>value" it returns "value". For "<TAG>value<OTHER>" it returns "value".
 func extractOFXTagValue(line, tag string) (string, bool) {
 	prefix := "<" + tag + ">"
-	idx := strings.Index(line, prefix)
-	if idx < 0 {
+	_, rest, found := strings.Cut(line, prefix)
+	if !found {
 		return "", false
 	}
-	rest := line[idx+len(prefix):]
 	// Value ends at next '<' or end of string
-	if endIdx := strings.Index(rest, "<"); endIdx >= 0 {
-		rest = rest[:endIdx]
+	if val, _, ok := strings.Cut(rest, "<"); ok {
+		rest = val
 	}
 	return strings.TrimSpace(rest), true
 }
@@ -659,19 +649,17 @@ func parseOFXTransaction(lines []string) *Transaction {
 		if !strings.HasPrefix(line, "<") {
 			continue
 		}
-		closeIdx := strings.Index(line[1:], ">")
-		if closeIdx < 0 {
+		tag, rest, found := strings.Cut(line[1:], ">")
+		if !found {
 			continue
 		}
-		tag := line[1 : closeIdx+1]
 		// Skip closing tags
 		if strings.HasPrefix(tag, "/") {
 			continue
 		}
-		rest := line[closeIdx+2:]
 		// Value ends at next '<' or end of string
-		if endIdx := strings.Index(rest, "<"); endIdx >= 0 {
-			rest = rest[:endIdx]
+		if val, _, ok := strings.Cut(rest, "<"); ok {
+			rest = val
 		}
 		fields[tag] = strings.TrimSpace(rest)
 	}
@@ -768,7 +756,7 @@ func ParseNubank(raw []byte, filename string) []Transaction {
 		// Skip header line
 		if i == 0 {
 			lower := strings.ToLower(normalizeText(line))
-			if strings.Contains(lower, "data,valor") || strings.Contains(lower, "data") {
+			if strings.Contains(lower, "data,valor,identificador,descri") {
 				continue
 			}
 		}
