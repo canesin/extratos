@@ -1,0 +1,134 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux/amd64
+            output: extratos-app-linux-amd64
+          - os: windows-latest
+            platform: windows/amd64
+            output: extratos-app-amd64.exe
+            nsis: true
+          - os: macos-latest
+            platform: darwin/universal
+            output: extratos-app.app
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # Linux dependencies
+      - name: Install Linux deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev nsis
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      # --- Linux build ---
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: wails build -tags webkit2_41
+
+      # --- Windows build ---
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: wails build -nsis
+
+      # --- macOS build ---
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        run: wails build -platform darwin/universal
+
+      - name: Create macOS .pkg
+        if: runner.os == 'macOS'
+        run: |
+          # Stage .app into a root directory for pkgbuild
+          mkdir -p pkg-root/Applications
+          cp -R build/bin/extratos-app.app pkg-root/Applications/Extratos.app
+          # Build component package
+          pkgbuild \
+            --root pkg-root \
+            --identifier "com.canesin.extratos" \
+            --version "1.0.0" \
+            --install-location "/" \
+            build/bin/extratos-app-universal.pkg
+
+      # --- Upload artifacts ---
+      - name: Upload Linux binary
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: extratos-linux-amd64
+          path: build/bin/extratos-app*
+
+      - name: Upload Windows binary + installer
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: extratos-windows-amd64
+          path: build/bin/extratos-app*
+
+      - name: Upload macOS .app + .pkg
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: extratos-macos-universal
+          path: |
+            build/bin/extratos-app.app
+            build/bin/extratos-app-universal.pkg
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Package artifacts
+        run: |
+          cd artifacts
+          # Linux
+          tar czf extratos-linux-amd64.tar.gz -C extratos-linux-amd64 .
+          # Windows — zip the installer
+          cd extratos-windows-amd64 && zip -r ../extratos-windows-amd64.zip . && cd ..
+          # macOS — zip the .pkg
+          cd extratos-macos-universal && zip -r ../extratos-macos-universal.zip . && cd ..
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/extratos-linux-amd64.tar.gz
+            artifacts/extratos-windows-amd64.zip
+            artifacts/extratos-macos-universal.zip
+          generate_release_notes: true

@@ -1,0 +1,10 @@
+title = "Extratos gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+paths = [
+    '''testdata/''',
+    '''\.gitleaks\.toml''',
+]

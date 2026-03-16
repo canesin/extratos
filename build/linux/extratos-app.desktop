@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=extratos-app
+Exec=extratos-app
+Icon=extratos-app
+Categories=Development;
+Terminal=false
+Keywords=wails
+Version=1.0
+StartupNotify=false

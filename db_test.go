@@ -1,0 +1,543 @@
+package main
+
+import (
+	"database/sql"
+	"os"
+	"path/filepath"
+	"testing"
+
+	_ "modernc.org/sqlite"
+)
+
+// newTestDB creates a DB in a temp directory for testing.
+func newTestDB(t *testing.T) *DB {
+	t.Helper()
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+
+	conn, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+
+	db := &DB{conn: conn}
+	if err := db.migrate(); err != nil {
+		conn.Close()
+		t.Fatalf("migrate: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return db
+}
+
+func TestMigration(t *testing.T) {
+	db := newTestDB(t)
+
+	// Verify tables exist
+	var name string
+	err := db.conn.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name='transactions'`).Scan(&name)
+	if err != nil {
+		t.Fatalf("transactions table not found: %v", err)
+	}
+
+	// Verify FTS5 virtual table
+	err = db.conn.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name='transactions_fts'`).Scan(&name)
+	if err != nil {
+		t.Fatalf("transactions_fts table not found: %v", err)
+	}
+
+	// Verify triggers
+	rows, err := db.conn.Query(`SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name`)
+	if err != nil {
+		t.Fatalf("query triggers: %v", err)
+	}
+	defer rows.Close()
+	var triggers []string
+	for rows.Next() {
+		var n string
+		rows.Scan(&n)
+		triggers = append(triggers, n)
+	}
+	expected := []string{"txn_ad", "txn_ai", "txn_au"}
+	if len(triggers) != len(expected) {
+		t.Fatalf("expected %d triggers, got %d: %v", len(expected), len(triggers), triggers)
+	}
+
+	// Verify schema version
+	var ver int
+	db.conn.QueryRow(`PRAGMA user_version`).Scan(&ver)
+	if ver != schemaVersion {
+		t.Errorf("expected schema version %d, got %d", schemaVersion, ver)
+	}
+}
+
+func TestMigrationIdempotent(t *testing.T) {
+	db := newTestDB(t)
+	// Run migration again — should not fail
+	if err := db.migrate(); err != nil {
+		t.Fatalf("second migrate failed: %v", err)
+	}
+}
+
+func TestMigrationRebuildsOnVersionBump(t *testing.T) {
+	db := newTestDB(t)
+	db.InsertTransactions(sampleTransactions())
+
+	// Simulate old schema version
+	db.conn.Exec(`PRAGMA user_version = 0`)
+
+	// Re-migrate should rebuild FTS
+	if err := db.migrate(); err != nil {
+		t.Fatalf("migrate after version bump: %v", err)
+	}
+
+	// FTS should still work
+	result, err := db.Search("Fernanda", 10, 0)
+	if err != nil {
+		t.Fatalf("search after rebuild: %v", err)
+	}
+	if result.Total != 1 {
+		t.Errorf("expected 1 result after rebuild, got %d", result.Total)
+	}
+}
+
+func ptr(v float64) *float64 { return &v }
+
+func sampleTransactions() []Transaction {
+	return []Transaction{
+		{
+			Date: "2026-01-05", Description: "Transfe Pix | Des: Fernanda Correa da si 05/01",
+			Doc: "0321351", Credit: nil, Debit: ptr(-1500.00), Balance: ptr(1.00),
+			Amount: ptr(-1500.00), Account: "Ag 3841 / 134175-8", Bank: "Bradesco", SourceFile: "Bradesco 2026.csv",
+		},
+		{
+			Date: "2026-01-12", Description: "Transfe Pix | Des: Maytê Celina Amarante 10/01",
+			Doc: "1233360", Credit: nil, Debit: ptr(-7315.00), Balance: ptr(1.00),
+			Amount: ptr(-7315.00), Account: "Ag 3841 / 134175-8", Bank: "Bradesco", SourceFile: "Bradesco 2026.csv",
+		},
+		{
+			Date: "2026-02-06", Description: "Transfe Pix | Rem: Brla Digital Ltda 06/02",
+			Doc: "2159129", Credit: ptr(2103576.88), Debit: nil, Balance: ptr(2103577.88),
+			Amount: ptr(2103576.88), Account: "Ag 3841 / 134175-8", Bank: "Bradesco", SourceFile: "Bradesco 2026.csv",
+		},
+	}
+}
+
+func TestInsertTransactions(t *testing.T) {
+	db := newTestDB(t)
+	txns := sampleTransactions()
+
+	inserted, err := db.InsertTransactions(txns)
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if inserted != 3 {
+		t.Errorf("expected 3 inserted, got %d", inserted)
+	}
+
+	// Verify count
+	var count int
+	db.conn.QueryRow(`SELECT COUNT(*) FROM transactions`).Scan(&count)
+	if count != 3 {
+		t.Errorf("expected 3 rows, got %d", count)
+	}
+
+	// Verify search_text is populated
+	var st string
+	db.conn.QueryRow(`SELECT search_text FROM transactions WHERE id = 1`).Scan(&st)
+	if st == "" {
+		t.Error("search_text is empty")
+	}
+	// Should be accent-stripped and lowercased
+	if st != buildSearchText(txns[0].Description, txns[0].Account, txns[0].Bank) {
+		t.Errorf("unexpected search_text: %q", st)
+	}
+}
+
+func TestInsertDedup(t *testing.T) {
+	db := newTestDB(t)
+	txns := sampleTransactions()
+
+	inserted1, _ := db.InsertTransactions(txns)
+	inserted2, _ := db.InsertTransactions(txns)
+
+	if inserted1 != 3 {
+		t.Errorf("first insert: expected 3, got %d", inserted1)
+	}
+	if inserted2 != 0 {
+		t.Errorf("second insert (dedup): expected 0, got %d", inserted2)
+	}
+}
+
+func TestSearchEmpty(t *testing.T) {
+	db := newTestDB(t)
+
+	result, err := db.Search("", 10, 0)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if result.Total != 0 {
+		t.Errorf("expected 0 total, got %d", result.Total)
+	}
+	if len(result.Transactions) != 0 {
+		t.Errorf("expected 0 transactions, got %d", len(result.Transactions))
+	}
+}
+
+func TestSearchAll(t *testing.T) {
+	db := newTestDB(t)
+	db.InsertTransactions(sampleTransactions())
+
+	result, err := db.Search("", 10, 0)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if result.Total != 3 {
+		t.Errorf("expected 3 total, got %d", result.Total)
+	}
+	if len(result.Transactions) != 3 {
+		t.Errorf("expected 3 transactions, got %d", len(result.Transactions))
+	}
+}
+
+func TestSearchFTS(t *testing.T) {
+	db := newTestDB(t)
+	db.InsertTransactions(sampleTransactions())
+
+	tests := []struct {
+		query    string
+		expected int
+	}{
+		{"Fernanda", 1},
+		{"fernanda", 1},
+		{"Maytê", 1},
+		{"Mayte", 1},        // accent-insensitive!
+		{"mayte", 1},        // case + accent insensitive
+		{"Brla", 1},
+		{"Transfe Pix", 3},
+		{"nonexistent", 0},
+		{"134175", 3},       // account number search
+		{"Bradesco", 3},     // bank name
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.query, func(t *testing.T) {
+			result, err := db.Search(tt.query, 100, 0)
+			if err != nil {
+				t.Fatalf("search %q: %v", tt.query, err)
+			}
+			if result.Total != tt.expected {
+				t.Errorf("search %q: expected %d results, got %d", tt.query, tt.expected, result.Total)
+			}
+		})
+	}
+}
+
+func TestSearchMultiTerm(t *testing.T) {
+	db := newTestDB(t)
+	db.InsertTransactions(sampleTransactions())
+
+	tests := []struct {
+		query    string
+		expected int
+	}{
+		{"Mayte, Correa", 2},            // OR: Maytê + Fernanda Correa
+		{"Fernanda, Mayte", 2},          // same two people
+		{"Fernanda, Mayte, Brla", 3},    // all three
+		{"nonexistent, Brla", 1},        // one match
+		{"nonexistent, nope", 0},        // no matches
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.query, func(t *testing.T) {
+			result, err := db.Search(tt.query, 100, 0)
+			if err != nil {
+				t.Fatalf("search %q: %v", tt.query, err)
+			}
+			if result.Total != tt.expected {
+				t.Errorf("search %q: expected %d results, got %d", tt.query, tt.expected, result.Total)
+			}
+		})
+	}
+}
+
+func TestSearchSummary(t *testing.T) {
+	db := newTestDB(t)
+	db.InsertTransactions(sampleTransactions())
+
+	result, err := db.Search("", 10, 0)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+
+	if result.TotalCredit != 2103576.88 {
+		t.Errorf("total credit: expected 2103576.88, got %f", result.TotalCredit)
+	}
+	if result.TotalDebit != -8815.00 {
+		t.Errorf("total debit: expected -8815.00, got %f", result.TotalDebit)
+	}
+	if result.MinDate != "2026-01-05" {
+		t.Errorf("min date: expected 2026-01-05, got %s", result.MinDate)
+	}
+	if result.MaxDate != "2026-02-06" {
+		t.Errorf("max date: expected 2026-02-06, got %s", result.MaxDate)
+	}
+
+	// Filtered summary
+	r2, _ := db.Search("Fernanda", 10, 0)
+	if r2.TotalDebit != -1500.00 {
+		t.Errorf("filtered debit: expected -1500.00, got %f", r2.TotalDebit)
+	}
+}
+
+func TestSearchPagination(t *testing.T) {
+	db := newTestDB(t)
+	db.InsertTransactions(sampleTransactions())
+
+	// Page 1: limit 2
+	r1, _ := db.Search("", 2, 0)
+	if len(r1.Transactions) != 2 {
+		t.Errorf("page 1: expected 2 transactions, got %d", len(r1.Transactions))
+	}
+	if r1.Total != 3 {
+		t.Errorf("page 1: expected total 3, got %d", r1.Total)
+	}
+
+	// Page 2: limit 2, offset 2
+	r2, _ := db.Search("", 2, 2)
+	if len(r2.Transactions) != 1 {
+		t.Errorf("page 2: expected 1 transaction, got %d", len(r2.Transactions))
+	}
+}
+
+func TestSearchAll_DB(t *testing.T) {
+	db := newTestDB(t)
+	db.InsertTransactions(sampleTransactions())
+
+	txns, err := db.SearchAll("Fernanda")
+	if err != nil {
+		t.Fatalf("searchAll: %v", err)
+	}
+	if len(txns) != 1 {
+		t.Errorf("expected 1 result, got %d", len(txns))
+	}
+
+	all, _ := db.SearchAll("")
+	if len(all) != 3 {
+		t.Errorf("expected 3 results, got %d", len(all))
+	}
+}
+
+func TestGetStats(t *testing.T) {
+	db := newTestDB(t)
+	db.InsertTransactions(sampleTransactions())
+
+	stats, err := db.GetStats()
+	if err != nil {
+		t.Fatalf("getStats: %v", err)
+	}
+
+	if stats["total_transactions"] != 3 {
+		t.Errorf("expected 3 total, got %v", stats["total_transactions"])
+	}
+	if stats["min_date"] != "2026-01-05" {
+		t.Errorf("expected min_date 2026-01-05, got %v", stats["min_date"])
+	}
+	if stats["max_date"] != "2026-02-06" {
+		t.Errorf("expected max_date 2026-02-06, got %v", stats["max_date"])
+	}
+
+	banks := stats["banks"].([]string)
+	if len(banks) != 1 || banks[0] != "Bradesco" {
+		t.Errorf("expected [Bradesco], got %v", banks)
+	}
+}
+
+func TestNewDB_RealPath(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "extratos.db")
+
+	conn, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	db := &DB{conn: conn}
+	err = db.migrate()
+	if err != nil {
+		t.Fatalf("migrate failed: %v", err)
+	}
+	db.Close()
+
+	// Re-open and verify
+	conn2, _ := sql.Open("sqlite", dbPath)
+	var count int
+	conn2.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name='transactions'`).Scan(&count)
+	if count != 1 {
+		t.Error("transactions table missing after re-open")
+	}
+	conn2.Close()
+
+	// Verify db file exists on disk
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		t.Error("db file not created")
+	}
+}
+
+func TestSearchClauseSummaries(t *testing.T) {
+	db := newTestDB(t)
+	db.InsertTransactions(sampleTransactions())
+
+	// Single term: no clause summaries
+	r1, err := db.Search("Fernanda", 100, 0)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(r1.ClauseSummaries) != 0 {
+		t.Errorf("single term should have no clause summaries, got %d", len(r1.ClauseSummaries))
+	}
+
+	// Multi-term: should have per-clause summaries
+	r2, err := db.Search("Fernanda, Mayte", 100, 0)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if r2.Total != 2 {
+		t.Errorf("expected 2 total results, got %d", r2.Total)
+	}
+	if len(r2.ClauseSummaries) != 2 {
+		t.Fatalf("expected 2 clause summaries, got %d", len(r2.ClauseSummaries))
+	}
+
+	// Verify each clause summary
+	fernanda := r2.ClauseSummaries[0]
+	if fernanda.Clause != "Fernanda" {
+		t.Errorf("expected clause 'Fernanda', got %q", fernanda.Clause)
+	}
+	if fernanda.Total != 1 {
+		t.Errorf("Fernanda: expected 1 result, got %d", fernanda.Total)
+	}
+	if fernanda.TotalDebit != -1500.00 {
+		t.Errorf("Fernanda: expected debit -1500, got %f", fernanda.TotalDebit)
+	}
+
+	mayte := r2.ClauseSummaries[1]
+	if mayte.Clause != "Mayte" {
+		t.Errorf("expected clause 'Mayte', got %q", mayte.Clause)
+	}
+	if mayte.Total != 1 {
+		t.Errorf("Mayte: expected 1 result, got %d", mayte.Total)
+	}
+	if mayte.TotalDebit != -7315.00 {
+		t.Errorf("Mayte: expected debit -7315, got %f", mayte.TotalDebit)
+	}
+
+	// Three terms
+	r3, _ := db.Search("Fernanda, Mayte, Brla", 100, 0)
+	if len(r3.ClauseSummaries) != 3 {
+		t.Fatalf("expected 3 clause summaries, got %d", len(r3.ClauseSummaries))
+	}
+	brla := r3.ClauseSummaries[2]
+	if brla.Total != 1 {
+		t.Errorf("Brla: expected 1 result, got %d", brla.Total)
+	}
+	if brla.TotalCredit != 2103576.88 {
+		t.Errorf("Brla: expected credit 2103576.88, got %f", brla.TotalCredit)
+	}
+}
+
+func TestListDatabases(t *testing.T) {
+	// Save and restore env to use temp dir
+	dir := t.TempDir()
+	origConfigDir := os.Getenv("XDG_CONFIG_HOME")
+	os.Setenv("XDG_CONFIG_HOME", dir)
+	t.Cleanup(func() { os.Setenv("XDG_CONFIG_HOME", origConfigDir) })
+
+	// Initially empty
+	dbs, err := ListDatabases()
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(dbs) != 0 {
+		t.Errorf("expected 0 databases, got %d", len(dbs))
+	}
+
+	// Create a DB
+	db, err := OpenNamedDB("test-empresa")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	db.Close()
+
+	// Should now list it
+	dbs, _ = ListDatabases()
+	if len(dbs) != 1 {
+		t.Fatalf("expected 1 database, got %d", len(dbs))
+	}
+	if dbs[0].Name != "test-empresa" {
+		t.Errorf("expected name 'test-empresa', got %q", dbs[0].Name)
+	}
+
+	// Create another
+	db2, _ := OpenNamedDB("pessoal")
+	db2.Close()
+
+	dbs, _ = ListDatabases()
+	if len(dbs) != 2 {
+		t.Errorf("expected 2 databases, got %d", len(dbs))
+	}
+}
+
+func TestBuildFilePreview(t *testing.T) {
+	txns := sampleTransactions()
+	fp := buildFilePreview(txns, "test.csv", "Bradesco")
+
+	if fp.Filename != "test.csv" {
+		t.Errorf("filename: expected test.csv, got %q", fp.Filename)
+	}
+	if fp.Bank != "Bradesco" {
+		t.Errorf("bank: expected Bradesco, got %q", fp.Bank)
+	}
+	if fp.Count != 3 {
+		t.Errorf("count: expected 3, got %d", fp.Count)
+	}
+	if fp.TotalCredit != 2103576.88 {
+		t.Errorf("total credit: expected 2103576.88, got %f", fp.TotalCredit)
+	}
+	if fp.TotalDebit != -8815.00 {
+		t.Errorf("total debit: expected -8815.00, got %f", fp.TotalDebit)
+	}
+	if fp.DateRange != "2026-01-05 a 2026-02-06" {
+		t.Errorf("date range: expected '2026-01-05 a 2026-02-06', got %q", fp.DateRange)
+	}
+	if fp.Account == "" {
+		t.Error("account should not be empty")
+	}
+
+	// Empty transactions
+	fp2 := buildFilePreview(nil, "empty.csv", "Itau")
+	if fp2.Count != 0 {
+		t.Errorf("empty: expected count 0, got %d", fp2.Count)
+	}
+}
+
+func TestBuildFTSQuery(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"Mayte", `"mayte"`},
+		{"Maytê", `"mayte"`},       // accent stripped
+		{"Mayte, Correa", `"mayte" OR "correa"`},
+		{"  Mayte ,  Correa  ", `"mayte" OR "correa"`},
+		{",,,", ""},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := buildFTSQuery(tt.input)
+			if got != tt.expected {
+				t.Errorf("buildFTSQuery(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
