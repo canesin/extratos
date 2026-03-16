@@ -33,6 +33,8 @@ type BankFormat string
 const (
 	FormatBradesco BankFormat = "Bradesco"
 	FormatItau     BankFormat = "Itau"
+	FormatOFX      BankFormat = "OFX"
+	FormatNubank   BankFormat = "Nubank"
 	FormatUnknown  BankFormat = "Unknown"
 )
 
@@ -47,6 +49,27 @@ type ParseResult struct {
 func DetectFormat(raw []byte) BankFormat {
 	// Normalize to UTF-8 for detection
 	text := decodeToUTF8(raw)
+	lines := splitLines(text)
+
+	// OFX: check for OFXHEADER: in first 10 lines or <OFX> in first 20 lines
+	for _, line := range lines[:min(10, len(lines))] {
+		if strings.HasPrefix(strings.TrimSpace(line), "OFXHEADER:") {
+			return FormatOFX
+		}
+	}
+	for _, line := range lines[:min(20, len(lines))] {
+		if strings.Contains(line, "<OFX>") {
+			return FormatOFX
+		}
+	}
+
+	// Nubank CSV: first line contains "Data,Valor,Identificador,Descri" (case-insensitive, accent-tolerant)
+	if len(lines) > 0 {
+		firstLower := strings.ToLower(normalizeText(lines[0]))
+		if strings.Contains(firstLower, "data,valor,identificador,descri") {
+			return FormatNubank
+		}
+	}
 
 	if headerRE.MatchString(text) {
 		return FormatBradesco
@@ -59,7 +82,6 @@ func DetectFormat(raw []byte) BankFormat {
 	}
 
 	// Itaú OFX-style or different header
-	lines := splitLines(text)
 	for _, line := range lines[:min(10, len(lines))] {
 		// Itaú TXT format: date;desc;value pattern
 		if itauDateRE.MatchString(strings.TrimSpace(line)) {
@@ -478,6 +500,19 @@ func ParseFile(path string) (*ParseResult, error) {
 
 	filename := filepath.Base(path)
 
+	// .ofx extension can bypass detection
+	if ext == ".ofx" {
+		txns := ParseOFX(raw, filename)
+		bank := "OFX"
+		if len(txns) > 0 {
+			bank = txns[0].Bank
+		}
+		return &ParseResult{
+			Transactions: txns,
+			Bank:         bank,
+		}, nil
+	}
+
 	format := DetectFormat(raw)
 	var txns []Transaction
 
@@ -486,14 +521,304 @@ func ParseFile(path string) (*ParseResult, error) {
 		txns = ParseBradesco(raw, filename)
 	case FormatItau:
 		txns = ParseItau(raw, filename)
+	case FormatOFX:
+		txns = ParseOFX(raw, filename)
+		bank := "OFX"
+		if len(txns) > 0 {
+			bank = txns[0].Bank
+		}
+		return &ParseResult{
+			Transactions: txns,
+			Bank:         bank,
+		}, nil
+	case FormatNubank:
+		txns = ParseNubank(raw, filename)
 	default:
-		return &ParseResult{Error: "Formato não reconhecido. Suporta: Bradesco, Itaú"}, nil
+		return &ParseResult{Error: "Formato não reconhecido. Suporta: Bradesco, Itaú, OFX, Nubank"}, nil
 	}
 
 	return &ParseResult{
 		Transactions: txns,
 		Bank:         string(format),
 	}, nil
+}
+
+// ofxBankNames maps known FID codes to friendly bank names.
+var ofxBankNames = map[string]string{
+	"001": "Banco do Brasil",
+	"104": "Caixa",
+	"033": "Santander",
+	"077": "Inter",
+	"756": "Sicoob",
+}
+
+// decodeToUTF8Windows1252 decodes from Windows-1252 if the input is not valid UTF-8.
+func decodeToUTF8Windows1252(raw []byte) string {
+	if utf8.Valid(raw) {
+		return string(raw)
+	}
+	decoder := charmap.Windows1252.NewDecoder()
+	result, err := decoder.Bytes(raw)
+	if err != nil {
+		return string(raw)
+	}
+	return string(result)
+}
+
+// extractOFXTagValue extracts the value for an SGML tag from a single line.
+// For "<TAG>value" it returns "value". For "<TAG>value<OTHER>" it returns "value".
+func extractOFXTagValue(line, tag string) (string, bool) {
+	prefix := "<" + tag + ">"
+	idx := strings.Index(line, prefix)
+	if idx < 0 {
+		return "", false
+	}
+	rest := line[idx+len(prefix):]
+	// Value ends at next '<' or end of string
+	if endIdx := strings.Index(rest, "<"); endIdx >= 0 {
+		rest = rest[:endIdx]
+	}
+	return strings.TrimSpace(rest), true
+}
+
+// ParseOFX parses an OFX/SGML file (Banco do Brasil, Caixa, Santander, Inter, etc.)
+func ParseOFX(raw []byte, filename string) []Transaction {
+	text := decodeToUTF8Windows1252(raw)
+	lines := splitLines(text)
+
+	var (
+		bankID   string
+		acctID   string
+		orgName  string
+		fid      string
+		txns     []Transaction
+		inTxn    bool
+		txnLines []string
+	)
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// Extract bank info from outside transaction blocks
+		if !inTxn {
+			if v, ok := extractOFXTagValue(trimmed, "BANKID"); ok && bankID == "" {
+				bankID = v
+			}
+			if v, ok := extractOFXTagValue(trimmed, "ACCTID"); ok && acctID == "" {
+				acctID = v
+			}
+			if v, ok := extractOFXTagValue(trimmed, "ORG"); ok && orgName == "" {
+				orgName = v
+			}
+			if v, ok := extractOFXTagValue(trimmed, "FID"); ok && fid == "" {
+				fid = v
+			}
+		}
+
+		if strings.Contains(trimmed, "<STMTTRN>") {
+			inTxn = true
+			txnLines = nil
+			continue
+		}
+		if strings.Contains(trimmed, "</STMTTRN>") {
+			if inTxn {
+				txn := parseOFXTransaction(txnLines)
+				if txn != nil {
+					txn.SourceFile = filename
+					txns = append(txns, *txn)
+				}
+			}
+			inTxn = false
+			continue
+		}
+		if inTxn {
+			txnLines = append(txnLines, trimmed)
+		}
+	}
+
+	// Determine bank name from FID, ORG, or fallback
+	bankName := resolveBankName(fid, orgName)
+
+	// Format account
+	account := formatOFXAccount(bankID, acctID)
+
+	// Fill in bank/account on all transactions
+	for i := range txns {
+		txns[i].Bank = bankName
+		txns[i].Account = account
+	}
+
+	return txns
+}
+
+// parseOFXTransaction parses the lines inside a <STMTTRN>...</STMTTRN> block.
+func parseOFXTransaction(lines []string) *Transaction {
+	fields := make(map[string]string)
+	for _, line := range lines {
+		// Each line is like <TAG>value
+		if !strings.HasPrefix(line, "<") {
+			continue
+		}
+		closeIdx := strings.Index(line[1:], ">")
+		if closeIdx < 0 {
+			continue
+		}
+		tag := line[1 : closeIdx+1]
+		// Skip closing tags
+		if strings.HasPrefix(tag, "/") {
+			continue
+		}
+		rest := line[closeIdx+2:]
+		// Value ends at next '<' or end of string
+		if endIdx := strings.Index(rest, "<"); endIdx >= 0 {
+			rest = rest[:endIdx]
+		}
+		fields[tag] = strings.TrimSpace(rest)
+	}
+
+	dtStr := fields["DTPOSTED"]
+	if dtStr == "" {
+		return nil
+	}
+
+	// Parse date: YYYYMMDD or YYYYMMDDHHMMSS — take first 8 chars
+	if len(dtStr) < 8 {
+		return nil
+	}
+	dtStr = dtStr[:8]
+	dt, err := time.Parse("20060102", dtStr)
+	if err != nil {
+		return nil
+	}
+	dateFormatted := dt.Format("2006-01-02")
+
+	// Parse amount: handle both dot and comma decimal
+	amtStr := fields["TRNAMT"]
+	if amtStr == "" {
+		return nil
+	}
+	amtStr = strings.ReplaceAll(amtStr, ",", ".")
+	amount, err := strconv.ParseFloat(amtStr, 64)
+	if err != nil {
+		return nil
+	}
+
+	memo := fields["MEMO"]
+	if memo == "" {
+		memo = fields["NAME"]
+	}
+
+	doc := fields["CHECKNUM"]
+	if doc == "" {
+		doc = fields["FITID"]
+	}
+
+	var credit, debit *float64
+	if amount >= 0 {
+		credit = &amount
+	} else {
+		debit = &amount
+	}
+
+	return &Transaction{
+		Date:        dateFormatted,
+		Description: memo,
+		Doc:         doc,
+		Credit:      credit,
+		Debit:       debit,
+		Amount:      &amount,
+	}
+}
+
+// resolveBankName determines the display bank name from FID and ORG.
+func resolveBankName(fid, org string) string {
+	if name, ok := ofxBankNames[fid]; ok {
+		return name
+	}
+	if org != "" {
+		return org
+	}
+	return "OFX"
+}
+
+// formatOFXAccount formats the OFX account as "Ag {BANKID} / {ACCTID}".
+func formatOFXAccount(bankID, acctID string) string {
+	if bankID != "" && acctID != "" {
+		return fmt.Sprintf("Ag %s / %s", bankID, acctID)
+	}
+	if acctID != "" {
+		return acctID
+	}
+	return "OFX"
+}
+
+// ParseNubank parses a Nubank CSV file.
+// Format: Data,Valor,Identificador,Descrição (UTF-8, comma-separated)
+func ParseNubank(raw []byte, filename string) []Transaction {
+	text := string(raw) // Already UTF-8
+	lines := splitLines(text)
+
+	var txns []Transaction
+
+	for i, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// Skip header line
+		if i == 0 {
+			lower := strings.ToLower(normalizeText(line))
+			if strings.Contains(lower, "data,valor") || strings.Contains(lower, "data") {
+				continue
+			}
+		}
+
+		fields := strings.SplitN(line, ",", 4)
+		if len(fields) < 4 {
+			continue
+		}
+
+		dateStr := strings.TrimSpace(fields[0])
+		valStr := strings.TrimSpace(fields[1])
+		identifier := strings.TrimSpace(fields[2])
+		desc := strings.TrimSpace(fields[3])
+
+		// Validate date format YYYY-MM-DD
+		if len(dateStr) != 10 || dateStr[4] != '-' || dateStr[7] != '-' {
+			continue
+		}
+		_, err := time.Parse("2006-01-02", dateStr)
+		if err != nil {
+			continue
+		}
+
+		// Parse value (dot decimal)
+		amount, err := strconv.ParseFloat(valStr, 64)
+		if err != nil {
+			continue
+		}
+
+		var credit, debit *float64
+		if amount >= 0 {
+			credit = &amount
+		} else {
+			debit = &amount
+		}
+
+		txns = append(txns, Transaction{
+			Date:        dateStr,
+			Description: desc,
+			Doc:         identifier,
+			Credit:      credit,
+			Debit:       debit,
+			Amount:      &amount,
+			Account:     "Nubank",
+			Bank:        string(FormatNubank),
+			SourceFile:  filename,
+		})
+	}
+
+	return txns
 }
 
 // normalizeText strips accents and lowercases text for accent-insensitive search.

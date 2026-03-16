@@ -6,7 +6,7 @@ Built with [Wails v3](https://wails.io/) (Go + React/TypeScript + shadcn/ui).
 
 ## Features
 
-- **Multi-bank support** — Bradesco (CSV) and Itaú (XLS) statement formats with auto-detection
+- **Multi-bank support** — Bradesco (CSV), Itaú (XLS), Nubank (CSV), and OFX (Banco do Brasil, Caixa, Santander, Inter, etc.) with auto-detection
 - **Full-text search** — FTS5 trigram tokenizer for substring and accent-insensitive matching
 - **Multi-term OR search** — comma-separated queries with per-clause summaries
 - **Smart deduplication** — re-import the same file without creating duplicates
@@ -19,10 +19,16 @@ Built with [Wails v3](https://wails.io/) (Go + React/TypeScript + shadcn/ui).
 
 ## Supported Banks
 
-| Bank     | Format | Encoding    | Notes                              |
-|----------|--------|-------------|------------------------------------|
-| Bradesco | CSV    | ISO-8859-1  | Semicolon-separated, DD/MM/YY dates |
-| Itaú     | XLS    | BIFF (binary) | Exported from internet banking     |
+| Bank             | Format | Encoding      | Notes                                  |
+|------------------|--------|---------------|----------------------------------------|
+| Bradesco         | CSV    | ISO-8859-1    | Semicolon-separated, DD/MM/YY dates    |
+| Itaú             | XLS    | BIFF (binary) | Exported from internet banking         |
+| Banco do Brasil  | OFX    | SGML          | Standard OFX/SGML export               |
+| Caixa Econômica  | OFX    | SGML          | Standard OFX/SGML export               |
+| Santander        | OFX    | SGML          | Standard OFX/SGML export               |
+| Inter            | OFX    | SGML          | Standard OFX/SGML export               |
+| Nubank           | CSV    | UTF-8         | Comma-separated, YYYY-MM-DD dates      |
+| Any bank         | OFX    | SGML          | Generic OFX/SGML support               |
 
 ## Build
 
@@ -76,7 +82,7 @@ extratos-app cli stats  --db mydb
 main.go          Entrypoint — routes to GUI (Wails) or CLI
 app.go           Wails service bindings (AppService)
 db.go            SQLite + FTS5 database layer
-parser.go        Bradesco CSV + Itaú XLS parsers
+parser.go        Bradesco CSV + Itaú XLS + OFX + Nubank CSV parsers
 export.go        XLSX export (excelize)
 cli.go           CLI subcommands (import/export/search/stats)
 frontend/        React + TypeScript + shadcn/ui
