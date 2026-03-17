@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Extratos — Visualizador de Extratos Bancários</title>
-  <meta name="description" content="App desktop para importar, buscar e analisar extratos bancários brasileiros. Suporta Bradesco e Itaú.">
+  <meta name="description" content="App desktop para importar, buscar e analisar extratos bancários brasileiros. Suporta Bradesco, Itaú, Nubank, Banco do Brasil, Caixa, Santander, Inter, Sicoob e OFX genérico.">
   <style>
     :root {
       --bg: #fafafa;
@@ -306,12 +306,16 @@
           <p>FTS5 com tokenização trigram para busca por substring, insensível a acentos. Separe termos com vírgula para busca OR com resumos por termo.</p>
         </div>
         <div class="feature-card">
-          <h3><span class="feature-icon">&#x1F4CA;</span> Análise agregada</h3>
-          <p>Totais de créditos, débitos e saldo líquido calculados em tempo real. Movimentações internas (investimentos) são filtradas automaticamente.</p>
+          <h3><span class="feature-icon">&#x1F4C5;</span> Filtros por período</h3>
+          <p>Filtre transações por intervalo de datas. Combine com busca textual para análises específicas de qualquer período.</p>
+        </div>
+        <div class="feature-card">
+          <h3><span class="feature-icon">&#x1F4CA;</span> Resumo mensal</h3>
+          <p>Visualize créditos, débitos e saldo líquido mês a mês. Detecta automaticamente transferências internas (investimentos, resgates) para não distorcer os totais.</p>
         </div>
         <div class="feature-card">
           <h3><span class="feature-icon">&#x1F4E5;</span> Import inteligente</h3>
-          <p>Pré-visualização antes de importar. Deduplicação automática — reimporte o mesmo arquivo sem criar duplicatas.</p>
+          <p>Pré-visualização antes de importar. Deduplicação automática via hash — reimporte o mesmo arquivo sem criar duplicatas.</p>
         </div>
         <div class="feature-card">
           <h3><span class="feature-icon">&#x1F4C4;</span> Export XLSX</h3>
@@ -325,6 +329,10 @@
           <h3><span class="feature-icon">&#x1F512;</span> 100% offline</h3>
           <p>Seus dados ficam no seu computador em um banco SQLite local. Nada é enviado para a nuvem.</p>
         </div>
+        <div class="feature-card">
+          <h3><span class="feature-icon">&#x1F4BB;</span> Modo CLI</h3>
+          <p>Importe, busque, exporte e consulte estatísticas direto do terminal. Integre com scripts e automações.</p>
+        </div>
       </div>
     </div>
   </section>
@@ -335,13 +343,40 @@
       <div class="bank-grid">
         <div class="bank-card">
           <div class="bank-name">Bradesco</div>
-          <div class="bank-format"><code>CSV</code> ISO-8859-1</div>
+          <div class="bank-format"><code>CSV</code></div>
         </div>
         <div class="bank-card">
           <div class="bank-name">Itaú</div>
-          <div class="bank-format"><code>XLS</code> BIFF binário</div>
+          <div class="bank-format"><code>XLS</code> <code>TXT</code></div>
+        </div>
+        <div class="bank-card">
+          <div class="bank-name">Nubank</div>
+          <div class="bank-format"><code>CSV</code></div>
+        </div>
+        <div class="bank-card">
+          <div class="bank-name">Banco do Brasil</div>
+          <div class="bank-format"><code>OFX</code></div>
+        </div>
+        <div class="bank-card">
+          <div class="bank-name">Caixa</div>
+          <div class="bank-format"><code>OFX</code></div>
+        </div>
+        <div class="bank-card">
+          <div class="bank-name">Santander</div>
+          <div class="bank-format"><code>OFX</code></div>
+        </div>
+        <div class="bank-card">
+          <div class="bank-name">Inter</div>
+          <div class="bank-format"><code>OFX</code></div>
+        </div>
+        <div class="bank-card">
+          <div class="bank-name">Sicoob</div>
+          <div class="bank-format"><code>OFX</code></div>
         </div>
       </div>
+      <p style="text-align:center; color:var(--muted); font-size:0.85rem; margin-top:16px;">
+        + qualquer banco que exporte <code style="background:var(--accent-light); padding:2px 6px; border-radius:4px; font-size:0.8rem;">OFX</code>
+      </p>
     </div>
   </section>
 
@@ -349,8 +384,8 @@
     <div class="container">
       <h2>Modo CLI</h2>
       <div class="cli-block">
-        <span class="comment"># Importar extratos</span><br>
-        <span class="prompt">$</span> extratos-app cli import --db pessoal bradesco.csv itau.xls<br><br>
+        <span class="comment"># Importar extratos (auto-detecta formato)</span><br>
+        <span class="prompt">$</span> extratos-app cli import --db pessoal bradesco.csv itau.xls bb.ofx nubank.csv<br><br>
         <span class="comment"># Buscar transações</span><br>
         <span class="prompt">$</span> extratos-app cli search --db pessoal "PIX, TED"<br><br>
         <span class="comment"># Exportar para Excel</span><br>
