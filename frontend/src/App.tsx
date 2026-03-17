@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { formatBRL } from "@/lib/utils";
+import { sortTransactions, type SortKey, type SortDir } from "@/lib/sort";
 
 interface Stats {
   total_transactions: number;
@@ -484,38 +485,6 @@ function FilePreviewCard({
 }
 
 // ─── Column Sorting ──────────────────────────────────────────────────
-
-type SortKey =
-  | "date"
-  | "description"
-  | "doc"
-  | "credit"
-  | "debit"
-  | "balance"
-  | "account"
-  | "bank";
-type SortDir = "asc" | "desc";
-
-function sortTransactions(
-  txns: SearchResult["transactions"],
-  key: SortKey | null,
-  dir: SortDir
-) {
-  if (!key) return txns;
-  const sorted = [...txns];
-  const mul = dir === "asc" ? 1 : -1;
-  sorted.sort((a, b) => {
-    const av = a[key];
-    const bv = b[key];
-    if (av == null && bv == null) return 0;
-    if (av == null) return 1;
-    if (bv == null) return -1;
-    if (typeof av === "number" && typeof bv === "number")
-      return (av - bv) * mul;
-    return String(av).localeCompare(String(bv), "pt-BR") * mul;
-  });
-  return sorted;
-}
 
 function SortIcon({ active, dir }: { active: boolean; dir: SortDir }) {
   if (!active)

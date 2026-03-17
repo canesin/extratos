@@ -1,0 +1,59 @@
+name: Test
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+
+jobs:
+  go-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - name: Create frontend dist placeholder (for go:embed)
+        run: mkdir -p frontend/dist && echo '<!doctype html>' > frontend/dist/index.html
+
+      - name: Run Go tests
+        run: go test -tags webkit2_41 -v -race -count=1 ./...
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - name: Generate Wails bindings
+        run: |
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.74
+          wails3 generate bindings
+
+      - name: Install dependencies
+        run: cd frontend && npm install
+
+      - name: Type check
+        run: cd frontend && npx tsc --noEmit
+
+      - name: Run tests
+        run: cd frontend && npx vitest run
