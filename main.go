@@ -34,7 +34,7 @@ func main() {
 
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:            "Extratos",
-		Width:            1440,
+		Width:            1024,
 		Height:           800,
 		BackgroundColour: application.NewRGB(255, 255, 255),
 		URL:              "/",
