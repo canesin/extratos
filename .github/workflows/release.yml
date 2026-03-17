@@ -75,7 +75,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: extratos-windows-amd64
-          path: build/windows/nsis/*-installer.exe
+          path: bin/*-installer.exe
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
@@ -145,7 +145,7 @@ jobs:
           # Linux
           tar czf extratos-linux-amd64.tar.gz -C extratos-linux-amd64 .
           # Windows installer
-          cp extratos-windows-amd64/*-installer.exe extratos-windows-amd64-installer.exe
+          cp extratos-windows-amd64/*-installer.exe extratos-windows-amd64-installer.exe || cp extratos-windows-amd64-exe/extratos-app.exe extratos-windows-amd64.exe
           # macOS
           cp extratos-macos-universal/extratos-macos-universal.pkg extratos-macos-universal.pkg
 
