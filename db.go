@@ -448,7 +448,7 @@ func buildSingleFTSClause(term string) string {
 
 // MonthlySummary holds aggregate stats grouped by month.
 type MonthlySummary struct {
-	Month       string  `json:"month"`       // "2026-03"
+	Month       string  `json:"month"` // "2026-03"
 	Count       int     `json:"count"`
 	TotalCredit float64 `json:"total_credit"`
 	TotalDebit  float64 `json:"total_debit"`
@@ -458,7 +458,7 @@ type MonthlySummary struct {
 // buildFilterClause builds WHERE conditions and args for optional FTS query and date range.
 // Returns the WHERE clause (including "WHERE" keyword if non-empty) and the args slice.
 // When ftsQuery is non-empty, FTS is applied via a subquery on transactions_fts.
-func buildFilterClause(ftsQuery, dateFrom, dateTo string) (where string, args []interface{}) {
+func buildFilterClause(ftsQuery, dateFrom, dateTo string) (where string, args []any) {
 	var conditions []string
 
 	if ftsQuery != "" {
@@ -507,12 +507,12 @@ func (db *DB) SearchFiltered(query string, limit, offset int, dateFrom, dateTo s
 
 	// Paginated results — need to alias table for the JOIN case
 	var paginatedQuery string
-	var paginatedArgs []interface{}
+	var paginatedArgs []any
 
 	if ftsQuery != "" {
 		// Build date conditions separately for the JOIN query
 		var dateConditions []string
-		var dateArgs []interface{}
+		var dateArgs []any
 		if dateFrom != "" {
 			dateConditions = append(dateConditions, `t.date >= ?`)
 			dateArgs = append(dateArgs, dateFrom)
@@ -620,8 +620,8 @@ func (db *DB) GetMonthlySummary(query string, dateFrom, dateTo string) ([]Monthl
 	return summaries, rows.Err()
 }
 
-func (db *DB) GetStats() (map[string]interface{}, error) {
-	stats := make(map[string]interface{})
+func (db *DB) GetStats() (map[string]any, error) {
+	stats := make(map[string]any)
 
 	var total int
 	db.conn.QueryRow(`SELECT COUNT(*) FROM transactions`).Scan(&total)
