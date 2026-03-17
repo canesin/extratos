@@ -210,13 +210,13 @@ func TestSearchFTS(t *testing.T) {
 		{"Fernanda", 1},
 		{"fernanda", 1},
 		{"Maytê", 1},
-		{"Mayte", 1},        // accent-insensitive!
-		{"mayte", 1},        // case + accent insensitive
+		{"Mayte", 1}, // accent-insensitive!
+		{"mayte", 1}, // case + accent insensitive
 		{"Brla", 1},
 		{"Transfe Pix", 3},
 		{"nonexistent", 0},
-		{"134175", 3},       // account number search
-		{"Bradesco", 3},     // bank name
+		{"134175", 3},   // account number search
+		{"Bradesco", 3}, // bank name
 	}
 
 	for _, tt := range tests {
@@ -240,11 +240,11 @@ func TestSearchMultiTerm(t *testing.T) {
 		query    string
 		expected int
 	}{
-		{"Mayte, Correa", 2},            // OR: Maytê + Fernanda Correa
-		{"Fernanda, Mayte", 2},          // same two people
-		{"Fernanda, Mayte, Brla", 3},    // all three
-		{"nonexistent, Brla", 1},        // one match
-		{"nonexistent, nope", 0},        // no matches
+		{"Mayte, Correa", 2},         // OR: Maytê + Fernanda Correa
+		{"Fernanda, Mayte", 2},       // same two people
+		{"Fernanda, Mayte, Brla", 3}, // all three
+		{"nonexistent, Brla", 1},     // one match
+		{"nonexistent, nope", 0},     // no matches
 	}
 
 	for _, tt := range tests {
@@ -674,7 +674,7 @@ func TestBuildFTSQuery(t *testing.T) {
 		expected string
 	}{
 		{"Mayte", `"mayte"`},
-		{"Maytê", `"mayte"`},       // accent stripped
+		{"Maytê", `"mayte"`}, // accent stripped
 		{"Mayte, Correa", `"mayte" OR "correa"`},
 		{"  Mayte ,  Correa  ", `"mayte" OR "correa"`},
 		{",,,", ""},
