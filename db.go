@@ -12,42 +12,27 @@ import (
 
 // schemaVersion is incremented whenever the DB schema or FTS indexing changes.
 // Bumping this triggers an automatic FTS rebuild on next startup.
-const schemaVersion = 2
+const schemaVersion = 3
 
 // externalFilter is the SQL condition excluding internal banking movements
 // (investment applications/redemptions) from aggregate sums.
-// Covers Bradesco, Itaú, Banco do Brasil, Caixa, and Nubank patterns.
-const externalFilter = `description NOT LIKE 'Resgate Inv%' ` +
-	`AND description NOT LIKE 'Resg.autom%' ` +
-	`AND description NOT LIKE 'Resg/vencto%' ` +
-	`AND description NOT LIKE 'Rent.inv%' ` +
-	`AND description NOT LIKE 'Rentab.invest%' ` +
-	`AND description NOT LIKE 'Apl.invest%' ` +
-	`AND description NOT LIKE 'Aplicacao Cdb%' ` +
-	`AND description NOT LIKE 'Aplicacao Inve%' ` +
-	`AND description NOT LIKE 'REND PAGO APLIC AUT%' ` +
-	`AND description NOT LIKE 'RESGATE CDB%' ` +
-	`AND description NOT LIKE 'APLICACAO CDB%' ` +
-	// Banco do Brasil
-	`AND description NOT LIKE 'APLICACAO POUPANCA%' ` +
-	`AND description NOT LIKE 'RESGATE POUPANCA%' ` +
-	`AND description NOT LIKE 'APLICACAO FUNDOS%' ` +
-	`AND description NOT LIKE 'RESGATE FUNDOS%' ` +
-	// Caixa
-	`AND description NOT LIKE 'APL POUP%' ` +
-	`AND description NOT LIKE 'RES POUP%' ` +
-	// Nubank
-	`AND description NOT LIKE 'Aplicação RDB%' ` +
-	`AND description NOT LIKE 'Resgate RDB%'`
+const externalFilter = `is_internal = 0`
 
-// aggCols is the SELECT columns for aggregate queries,
-// counting all rows but summing only external (non-internal) transactions.
-var aggCols = fmt.Sprintf(`COUNT(*),
+// buildAggCols returns the SELECT columns for aggregate queries.
+// When showInternal is "internal", sums include all rows (already filtered by WHERE).
+// Otherwise, sums exclude internal transactions.
+func buildAggCols(showInternal string) string {
+	filter := externalFilter
+	if showInternal == "internal" {
+		filter = "1=1"
+	}
+	return fmt.Sprintf(`COUNT(*),
 	COALESCE(SUM(CASE WHEN %[1]s THEN credit END), 0),
 	COALESCE(SUM(CASE WHEN %[1]s THEN debit END), 0),
 	COALESCE(SUM(CASE WHEN %[1]s THEN amount END), 0),
 	COALESCE(MIN(date),''),
-	COALESCE(MAX(date),'')`, externalFilter)
+	COALESCE(MAX(date),'')`, filter)
+}
 
 // internalPrefixes lists description prefixes for internal banking movements.
 // Covers Bradesco, Itaú, Banco do Brasil, Caixa, and Nubank patterns.
@@ -215,7 +200,8 @@ func (db *DB) migrate() error {
 		bank TEXT NOT NULL,
 		source_file TEXT NOT NULL,
 		import_hash TEXT NOT NULL,
-		search_text TEXT NOT NULL DEFAULT ''
+		search_text TEXT NOT NULL DEFAULT '',
+		is_internal INTEGER NOT NULL DEFAULT 0
 	)`); err != nil {
 		return fmt.Errorf("create table: %w", err)
 	}
@@ -229,6 +215,19 @@ func (db *DB) migrate() error {
 		if _, err := db.conn.Exec(`ALTER TABLE transactions ADD COLUMN search_text TEXT NOT NULL DEFAULT ''`); err != nil {
 			return fmt.Errorf("add search_text column: %w", err)
 		}
+	}
+
+	// Add is_internal column if missing (existing DBs from older schema)
+	if !db.hasColumn("transactions", "is_internal") {
+		if _, err := db.conn.Exec(`ALTER TABLE transactions ADD COLUMN is_internal INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("add is_internal column: %w", err)
+		}
+		db.backfillIsInternal()
+	}
+
+	// Index for efficient is_internal filtering
+	if _, err := db.conn.Exec(`CREATE INDEX IF NOT EXISTS idx_txn_internal ON transactions(is_internal)`); err != nil {
+		return fmt.Errorf("create is_internal index: %w", err)
 	}
 
 	// Check schema version — rebuild FTS if schema changed
@@ -340,6 +339,23 @@ func (db *DB) populateSearchText() {
 	tx.Commit()
 }
 
+func (db *DB) backfillIsInternal() {
+	var conditions []string
+	for _, p := range internalPrefixes {
+		conditions = append(conditions, fmt.Sprintf(`description LIKE '%s%%'`, strings.ReplaceAll(p, "'", "''")))
+	}
+	if len(conditions) == 0 {
+		return
+	}
+	query := `UPDATE transactions SET is_internal = 1 WHERE is_internal = 0 AND (` + strings.Join(conditions, " OR ") + `)`
+	db.conn.Exec(query)
+}
+
+func (db *DB) ToggleInternal(id int64) error {
+	_, err := db.conn.Exec(`UPDATE transactions SET is_internal = 1 - is_internal WHERE id = ?`, id)
+	return err
+}
+
 type Transaction struct {
 	ID          int64    `json:"id"`
 	Date        string   `json:"date"`
@@ -352,11 +368,13 @@ type Transaction struct {
 	Account     string   `json:"account"`
 	Bank        string   `json:"bank"`
 	SourceFile  string   `json:"source_file"`
+	IsInternal  bool     `json:"is_internal"`
 }
 
 type SearchResult struct {
 	Transactions    []Transaction   `json:"transactions"`
 	Total           int             `json:"total"`
+	InternalCount   int             `json:"internal_count"`
 	TotalCredit     float64         `json:"total_credit"`
 	TotalDebit      float64         `json:"total_debit"`
 	NetAmount       float64         `json:"net_amount"`
@@ -373,8 +391,8 @@ func (db *DB) InsertTransactions(txns []Transaction) (int, error) {
 	defer tx.Rollback()
 
 	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO transactions
-		(date, description, doc, credit, debit, balance, amount, account, bank, source_file, import_hash, search_text)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		(date, description, doc, credit, debit, balance, amount, account, bank, source_file, import_hash, search_text, is_internal)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return 0, err
 	}
@@ -385,7 +403,11 @@ func (db *DB) InsertTransactions(txns []Transaction) (int, error) {
 		hash := fmt.Sprintf("%s|%s|%s|%v|%v|%s|%s",
 			t.Date, t.Description, t.Doc, ptrVal(t.Credit), ptrVal(t.Debit), t.Account, t.Bank)
 		searchText := buildSearchText(t.Description, t.Account, t.Bank)
-		res, err := stmt.Exec(t.Date, t.Description, t.Doc, t.Credit, t.Debit, t.Balance, t.Amount, t.Account, t.Bank, t.SourceFile, hash, searchText)
+		isInternal := 0
+		if IsInternalTransfer(t.Description) {
+			isInternal = 1
+		}
+		res, err := stmt.Exec(t.Date, t.Description, t.Doc, t.Credit, t.Debit, t.Balance, t.Amount, t.Account, t.Bank, t.SourceFile, hash, searchText, isInternal)
 		if err != nil {
 			return inserted, err
 		}
@@ -455,10 +477,10 @@ type MonthlySummary struct {
 	NetAmount   float64 `json:"net_amount"`
 }
 
-// buildFilterClause builds WHERE conditions and args for optional FTS query and date range.
+// buildFilterClause builds WHERE conditions and args for optional FTS query, date range, and internal filter.
 // Returns the WHERE clause (including "WHERE" keyword if non-empty) and the args slice.
-// When ftsQuery is non-empty, FTS is applied via a subquery on transactions_fts.
-func buildFilterClause(ftsQuery, dateFrom, dateTo string) (where string, args []any) {
+// showInternal: "" = all, "external" = only external, "internal" = only internal.
+func buildFilterClause(ftsQuery, dateFrom, dateTo, showInternal string) (where string, args []any) {
 	var conditions []string
 
 	if ftsQuery != "" {
@@ -473,6 +495,12 @@ func buildFilterClause(ftsQuery, dateFrom, dateTo string) (where string, args []
 		conditions = append(conditions, `date <= ?`)
 		args = append(args, dateTo)
 	}
+	switch showInternal {
+	case "external":
+		conditions = append(conditions, `is_internal = 0`)
+	case "internal":
+		conditions = append(conditions, `is_internal = 1`)
+	}
 
 	if len(conditions) > 0 {
 		where = " WHERE " + strings.Join(conditions, " AND ")
@@ -481,10 +509,10 @@ func buildFilterClause(ftsQuery, dateFrom, dateTo string) (where string, args []
 }
 
 func (db *DB) Search(query string, limit, offset int) (*SearchResult, error) {
-	return db.SearchFiltered(query, limit, offset, "", "")
+	return db.SearchFiltered(query, limit, offset, "", "", "")
 }
 
-func (db *DB) SearchFiltered(query string, limit, offset int, dateFrom, dateTo string) (*SearchResult, error) {
+func (db *DB) SearchFiltered(query string, limit, offset int, dateFrom, dateTo, showInternal string) (*SearchResult, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -499,47 +527,58 @@ func (db *DB) SearchFiltered(query string, limit, offset int, dateFrom, dateTo s
 		}
 	}
 
-	where, args := buildFilterClause(ftsQuery, dateFrom, dateTo)
+	where, args := buildFilterClause(ftsQuery, dateFrom, dateTo, showInternal)
 
 	// Aggregates over all matching rows, sums exclude internal banking movements
-	db.conn.QueryRow(`SELECT `+aggCols+` FROM transactions`+where, args...).
+	db.conn.QueryRow(`SELECT `+buildAggCols(showInternal)+` FROM transactions`+where, args...).
 		Scan(&result.Total, &result.TotalCredit, &result.TotalDebit, &result.NetAmount, &result.MinDate, &result.MaxDate)
+
+	// Count internal transactions in the (unfiltered-by-internal) result set
+	internalWhere, internalArgs := buildFilterClause(ftsQuery, dateFrom, dateTo, "internal")
+	db.conn.QueryRow(`SELECT COUNT(*) FROM transactions`+internalWhere, internalArgs...).
+		Scan(&result.InternalCount)
 
 	// Paginated results — need to alias table for the JOIN case
 	var paginatedQuery string
 	var paginatedArgs []any
 
 	if ftsQuery != "" {
-		// Build date conditions separately for the JOIN query
-		var dateConditions []string
-		var dateArgs []any
+		// Build extra conditions separately for the JOIN query
+		var extraConditions []string
+		var extraArgs []any
 		if dateFrom != "" {
-			dateConditions = append(dateConditions, `t.date >= ?`)
-			dateArgs = append(dateArgs, dateFrom)
+			extraConditions = append(extraConditions, `t.date >= ?`)
+			extraArgs = append(extraArgs, dateFrom)
 		}
 		if dateTo != "" {
-			dateConditions = append(dateConditions, `t.date <= ?`)
-			dateArgs = append(dateArgs, dateTo)
+			extraConditions = append(extraConditions, `t.date <= ?`)
+			extraArgs = append(extraArgs, dateTo)
+		}
+		switch showInternal {
+		case "external":
+			extraConditions = append(extraConditions, `t.is_internal = 0`)
+		case "internal":
+			extraConditions = append(extraConditions, `t.is_internal = 1`)
 		}
 
 		whereClause := `WHERE transactions_fts MATCH ?`
 		paginatedArgs = append(paginatedArgs, ftsQuery)
-		if len(dateConditions) > 0 {
-			whereClause += " AND " + strings.Join(dateConditions, " AND ")
-			paginatedArgs = append(paginatedArgs, dateArgs...)
+		if len(extraConditions) > 0 {
+			whereClause += " AND " + strings.Join(extraConditions, " AND ")
+			paginatedArgs = append(paginatedArgs, extraArgs...)
 		}
 
-		paginatedQuery = `SELECT t.id, t.date, t.description, t.doc, t.credit, t.debit, t.balance, t.amount, t.account, t.bank, t.source_file
+		paginatedQuery = `SELECT t.id, t.date, t.description, t.doc, t.credit, t.debit, t.balance, t.amount, t.account, t.bank, t.source_file, t.is_internal
 			FROM transactions t
 			INNER JOIN transactions_fts fts ON t.id = fts.rowid
 			` + whereClause + `
 			ORDER BY t.date DESC, t.id DESC
 			LIMIT ? OFFSET ?`
 	} else {
-		// No FTS — reuse buildFilterClause (date-only conditions)
-		dateWhere, dateArgs := buildFilterClause("", dateFrom, dateTo)
+		// No FTS — reuse buildFilterClause (date-only + showInternal conditions)
+		dateWhere, dateArgs := buildFilterClause("", dateFrom, dateTo, showInternal)
 		paginatedArgs = append(paginatedArgs, dateArgs...)
-		paginatedQuery = `SELECT id, date, description, doc, credit, debit, balance, amount, account, bank, source_file
+		paginatedQuery = `SELECT id, date, description, doc, credit, debit, balance, amount, account, bank, source_file, is_internal
 			FROM transactions` + dateWhere + ` ORDER BY date DESC, id DESC LIMIT ? OFFSET ?`
 	}
 
@@ -553,7 +592,7 @@ func (db *DB) SearchFiltered(query string, limit, offset int, dateFrom, dateTo s
 
 	for rows.Next() {
 		var t Transaction
-		if err := rows.Scan(&t.ID, &t.Date, &t.Description, &t.Doc, &t.Credit, &t.Debit, &t.Balance, &t.Amount, &t.Account, &t.Bank, &t.SourceFile); err != nil {
+		if err := rows.Scan(&t.ID, &t.Date, &t.Description, &t.Doc, &t.Credit, &t.Debit, &t.Balance, &t.Amount, &t.Account, &t.Bank, &t.SourceFile, &t.IsInternal); err != nil {
 			return nil, err
 		}
 		result.Transactions = append(result.Transactions, t)
@@ -570,10 +609,10 @@ func (db *DB) SearchFiltered(query string, limit, offset int, dateFrom, dateTo s
 			if fts == "" {
 				continue
 			}
-			clauseWhere, clauseArgs := buildFilterClause(fts, dateFrom, dateTo)
+			clauseWhere, clauseArgs := buildFilterClause(fts, dateFrom, dateTo, showInternal)
 			var cs ClauseSummary
 			cs.Clause = clause
-			db.conn.QueryRow(`SELECT `+aggCols+` FROM transactions`+clauseWhere, clauseArgs...).
+			db.conn.QueryRow(`SELECT `+buildAggCols(showInternal)+` FROM transactions`+clauseWhere, clauseArgs...).
 				Scan(&cs.Total, &cs.TotalCredit, &cs.TotalDebit, &cs.NetAmount, &cs.MinDate, &cs.MaxDate)
 			result.ClauseSummaries = append(result.ClauseSummaries, cs)
 		}
@@ -582,7 +621,7 @@ func (db *DB) SearchFiltered(query string, limit, offset int, dateFrom, dateTo s
 	return result, nil
 }
 
-func (db *DB) GetMonthlySummary(query string, dateFrom, dateTo string) ([]MonthlySummary, error) {
+func (db *DB) GetMonthlySummary(query string, dateFrom, dateTo, showInternal string) ([]MonthlySummary, error) {
 	ftsQuery := ""
 	if query != "" {
 		ftsQuery = buildFTSQuery(query)
@@ -591,8 +630,12 @@ func (db *DB) GetMonthlySummary(query string, dateFrom, dateTo string) ([]Monthl
 		}
 	}
 
-	where, args := buildFilterClause(ftsQuery, dateFrom, dateTo)
+	where, args := buildFilterClause(ftsQuery, dateFrom, dateTo, showInternal)
 
+	sumFilter := externalFilter
+	if showInternal == "internal" {
+		sumFilter = "1=1"
+	}
 	sql := fmt.Sprintf(`SELECT
 		substr(date, 1, 7) as month,
 		COUNT(*),
@@ -601,7 +644,7 @@ func (db *DB) GetMonthlySummary(query string, dateFrom, dateTo string) ([]Monthl
 		COALESCE(SUM(CASE WHEN %[1]s THEN amount END), 0)
 		FROM transactions%[2]s
 		GROUP BY substr(date, 1, 7)
-		ORDER BY month DESC`, externalFilter, where)
+		ORDER BY month DESC`, sumFilter, where)
 
 	rows, err := db.conn.Query(sql, args...)
 	if err != nil {
@@ -659,23 +702,34 @@ func (db *DB) GetStats() (map[string]any, error) {
 	return stats, nil
 }
 
-func (db *DB) SearchAll(query string) ([]Transaction, error) {
+func (db *DB) SearchAll(query string, showInternal string) ([]Transaction, error) {
 	var rows *sql.Rows
 	var err error
 
 	if query == "" {
-		rows, err = db.conn.Query(`SELECT id, date, description, doc, credit, debit, balance, amount, account, bank, source_file
-			FROM transactions ORDER BY date DESC, id DESC`)
+		where, args := buildFilterClause("", "", "", showInternal)
+		rows, err = db.conn.Query(`SELECT id, date, description, doc, credit, debit, balance, amount, account, bank, source_file, is_internal
+			FROM transactions`+where+` ORDER BY date DESC, id DESC`, args...)
 	} else {
 		ftsQuery := buildFTSQuery(query)
 		if ftsQuery == "" {
 			return nil, nil
 		}
-		rows, err = db.conn.Query(`SELECT t.id, t.date, t.description, t.doc, t.credit, t.debit, t.balance, t.amount, t.account, t.bank, t.source_file
+		// Build WHERE for the JOIN query
+		whereClause := `WHERE transactions_fts MATCH ?`
+		var qargs []any
+		qargs = append(qargs, ftsQuery)
+		switch showInternal {
+		case "external":
+			whereClause += ` AND t.is_internal = 0`
+		case "internal":
+			whereClause += ` AND t.is_internal = 1`
+		}
+		rows, err = db.conn.Query(`SELECT t.id, t.date, t.description, t.doc, t.credit, t.debit, t.balance, t.amount, t.account, t.bank, t.source_file, t.is_internal
 			FROM transactions t
 			INNER JOIN transactions_fts fts ON t.id = fts.rowid
-			WHERE transactions_fts MATCH ?
-			ORDER BY t.date DESC, t.id DESC`, ftsQuery)
+			`+whereClause+`
+			ORDER BY t.date DESC, t.id DESC`, qargs...)
 	}
 	if err != nil {
 		return nil, err
@@ -685,7 +739,7 @@ func (db *DB) SearchAll(query string) ([]Transaction, error) {
 	var txns []Transaction
 	for rows.Next() {
 		var t Transaction
-		if err := rows.Scan(&t.ID, &t.Date, &t.Description, &t.Doc, &t.Credit, &t.Debit, &t.Balance, &t.Amount, &t.Account, &t.Bank, &t.SourceFile); err != nil {
+		if err := rows.Scan(&t.ID, &t.Date, &t.Description, &t.Doc, &t.Credit, &t.Debit, &t.Balance, &t.Amount, &t.Account, &t.Bank, &t.SourceFile, &t.IsInternal); err != nil {
 			return nil, err
 		}
 		txns = append(txns, t)

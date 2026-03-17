@@ -47,7 +47,7 @@ func ExportXLSX(txns []Transaction, outPath string, query string) error {
 	boldSmallStyle, _ := f.NewStyle(&excelize.Style{Font: &excelize.Font{Bold: true, Size: 10, Color: "444444"}})
 
 	// -- Headers --
-	headers := []string{"Data", "Descrição", "Doc", "Crédito (R$)", "Débito (R$)", "Saldo (R$)", "Valor (R$)", "Conta", "Banco", "Arquivo"}
+	headers := []string{"Data", "Descrição", "Doc", "Crédito (R$)", "Débito (R$)", "Saldo (R$)", "Valor (R$)", "Conta", "Banco", "Tipo", "Arquivo"}
 	for i, h := range headers {
 		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
 		f.SetCellValue(sheet, cell, h)
@@ -103,13 +103,18 @@ func ExportXLSX(txns []Transaction, outPath string, query string) error {
 		cellBank, _ := excelize.CoordinatesToCellName(9, r)
 		f.SetCellValue(sheet, cellBank, t.Bank)
 
-		cellSrc, _ := excelize.CoordinatesToCellName(10, r)
+		cellTipo, _ := excelize.CoordinatesToCellName(10, r)
+		if t.IsInternal {
+			f.SetCellValue(sheet, cellTipo, "Interno")
+		}
+
+		cellSrc, _ := excelize.CoordinatesToCellName(11, r)
 		f.SetCellValue(sheet, cellSrc, t.SourceFile)
 	}
 
 	// -- Column widths --
 	widths := map[string]float64{
-		"A": 12, "B": 55, "C": 10, "D": 15, "E": 15, "F": 15, "G": 15, "H": 22, "I": 10, "J": 22,
+		"A": 12, "B": 55, "C": 10, "D": 15, "E": 15, "F": 15, "G": 15, "H": 22, "I": 10, "J": 10, "K": 22,
 	}
 	for col, w := range widths {
 		f.SetColWidth(sheet, col, col, w)
@@ -117,7 +122,7 @@ func ExportXLSX(txns []Transaction, outPath string, query string) error {
 
 	// -- Autofilter + freeze --
 	lastDataRow := len(txns) + 1
-	lastCell, _ := excelize.CoordinatesToCellName(10, lastDataRow)
+	lastCell, _ := excelize.CoordinatesToCellName(11, lastDataRow)
 	f.AutoFilter(sheet, "A1:"+lastCell, nil)
 	f.SetPanes(sheet, &excelize.Panes{
 		Freeze: true, XSplit: 0, YSplit: 1,

@@ -111,7 +111,7 @@ func cliExport(args []string) {
 	}
 	defer db.Close()
 
-	txns, err := db.SearchAll(*query)
+	txns, err := db.SearchAll(*query, "")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error searching: %v\n", err)
 		os.Exit(1)

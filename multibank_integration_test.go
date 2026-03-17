@@ -179,7 +179,7 @@ func TestMultiBankDateFilter(t *testing.T) {
 	loadAllSynthetic(t, db)
 
 	// January only
-	sr, err := db.SearchFiltered("", 100000, 0, "2026-01-01", "2026-01-31")
+	sr, err := db.SearchFiltered("", 100000, 0, "2026-01-01", "2026-01-31", "")
 	if err != nil {
 		t.Fatalf("SearchFiltered Jan: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestMultiBankDateFilter(t *testing.T) {
 	}
 
 	// FTS + date: "Pix" in first half of January
-	sr2, err := db.SearchFiltered("Pix", 100000, 0, "2026-01-01", "2026-01-15")
+	sr2, err := db.SearchFiltered("Pix", 100000, 0, "2026-01-01", "2026-01-15", "")
 	if err != nil {
 		t.Fatalf("SearchFiltered Pix+date: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestMultiBankMonthlySummary(t *testing.T) {
 	loadAllSynthetic(t, db)
 
 	// All banks, all dates
-	ms, err := db.GetMonthlySummary("", "", "")
+	ms, err := db.GetMonthlySummary("", "", "", "")
 	if err != nil {
 		t.Fatalf("GetMonthlySummary: %v", err)
 	}
@@ -235,7 +235,7 @@ func TestMultiBankMonthlySummary(t *testing.T) {
 	}
 
 	// Per-bank monthly: Bradesco only
-	msB, err := db.GetMonthlySummary("Bradesco", "", "")
+	msB, err := db.GetMonthlySummary("Bradesco", "", "", "")
 	if err != nil {
 		t.Fatalf("GetMonthlySummary Bradesco: %v", err)
 	}
@@ -256,7 +256,7 @@ func TestMultiBankExport(t *testing.T) {
 	tmpDir := os.Getenv("XDG_CONFIG_HOME")
 
 	// Export all 56 transactions
-	allTxns, err := db.SearchAll("")
+	allTxns, err := db.SearchAll("", "")
 	if err != nil {
 		t.Fatalf("SearchAll: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestMultiBankExport(t *testing.T) {
 	}
 
 	// Export Nubank only → verify 10 rows
-	nubankTxns, err := db.SearchAll("Nubank")
+	nubankTxns, err := db.SearchAll("Nubank", "")
 	if err != nil {
 		t.Fatalf("SearchAll Nubank: %v", err)
 	}
