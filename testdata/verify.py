@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""Verify extratos computations by independently parsing Bradesco CSV
+"""Verify extratos computations by independently parsing bank CSV/OFX files
 and comparing with Go-produced results (JSON and/or XLSX).
 
 Usage:
   python3 verify.py --csv testdata/synthetic_bradesco.csv
+  python3 verify.py --csv testdata/synthetic_itau.csv --format itau
+  python3 verify.py --csv testdata/synthetic_nubank.csv --format nubank
+  python3 verify.py --csv testdata/synthetic_bb.ofx --format ofx
   python3 verify.py --csv testdata/synthetic_bradesco.csv --go-json /tmp/result.json
   python3 verify.py --csv testdata/synthetic_bradesco.csv --xlsx /tmp/export.xlsx
+  python3 verify.py --multi file1.csv file2.csv ... --go-json /tmp/combined.json
 """
 import argparse
 import json
@@ -34,18 +38,21 @@ def parse_br_date(s):
     return f"{year:04d}-{month:02d}-{day:02d}"
 
 
-def parse_bradesco_csv(filepath):
-    """Parse Bradesco CSV, mimicking Go parser logic exactly."""
+def read_file(filepath):
+    """Read file with UTF-8/Latin-1 fallback, normalize line endings."""
     with open(filepath, "rb") as f:
         raw = f.read()
-
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
         text = raw.decode("latin-1")
-
     text = text.replace("\r\n", "\n").replace("\r", "\n")
-    lines = text.split("\n")
+    return text.split("\n")
+
+
+def parse_bradesco_csv(filepath):
+    """Parse Bradesco CSV, mimicking Go parser logic exactly."""
+    lines = read_file(filepath)
 
     header_re = re.compile(r"^Extrato de: Ag: (\d+) \| Conta: ([\d-]+) \| Entre")
     date_re = re.compile(r"^(\d{2}/\d{2}/\d{2});")
@@ -128,7 +135,203 @@ def parse_bradesco_csv(filepath):
     return transactions
 
 
+def parse_itau_csv(filepath):
+    """Parse Itaú CSV/TXT, mimicking Go ParseItau logic."""
+    lines = read_file(filepath)
+
+    date_re = re.compile(r"^(\d{2}/\d{2}/\d{4})")
+    transactions = []
+    account = "Itaú"
+
+    # Detect account from first 5 lines
+    for line in lines[:5]:
+        lower = line.strip().lower()
+        if "ag" in lower and "conta" in lower:
+            account = line.strip()
+            break
+
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        if not line or line.lower().startswith("data;"):
+            i += 1
+            continue
+
+        fields = line.split(";")
+        if len(fields) < 3:
+            i += 1
+            continue
+
+        dt = parse_br_date(fields[0].strip())
+        if dt is None:
+            i += 1
+            continue
+
+        desc = fields[1].strip()
+        if desc in ("SALDO ANTERIOR", "SALDO DO DIA", ""):
+            i += 1
+            continue
+
+        credit = None
+        debit = None
+        balance = None
+
+        if len(fields) >= 6:
+            # Full format: date;desc;doc;credit;debit;balance
+            credit = parse_br_number(fields[3])
+            debit = parse_br_number(fields[4])
+            balance = parse_br_number(fields[5])
+        elif len(fields) >= 3:
+            # Simple format: date;desc;value
+            val = parse_br_number(fields[2])
+            if val is not None:
+                if val >= 0:
+                    credit = val
+                else:
+                    debit = val
+
+        amount = credit if credit is not None else debit
+
+        # Continuation lines
+        while i + 1 < len(lines):
+            nxt = lines[i + 1].strip()
+            if nxt.startswith(";") and not nxt.startswith(";Total"):
+                parts = nxt.split(";", 3)
+                if len(parts) > 1:
+                    extra = parts[1].strip()
+                    if extra:
+                        desc += " | " + extra
+                i += 1
+            else:
+                break
+
+        transactions.append(
+            {
+                "date": dt,
+                "description": desc,
+                "doc": "",
+                "credit": credit,
+                "debit": debit,
+                "balance": balance,
+                "amount": amount,
+                "account": account,
+            }
+        )
+
+        i += 1
+
+    return transactions
+
+
+def parse_nubank_csv(filepath):
+    """Parse Nubank CSV: Data,Valor,Identificador,Descrição (UTF-8, YYYY-MM-DD)."""
+    lines = read_file(filepath)
+
+    transactions = []
+    for i, line in enumerate(lines):
+        line = line.strip()
+        if not line:
+            continue
+        # Skip header
+        if i == 0 and "data" in line.lower() and "valor" in line.lower():
+            continue
+
+        fields = line.split(",", 3)
+        if len(fields) < 4:
+            continue
+
+        dt = fields[0].strip()
+        if not re.match(r"\d{4}-\d{2}-\d{2}", dt):
+            continue
+
+        val = Decimal(fields[1].strip())
+        desc = fields[3].strip()
+
+        credit = val if val > 0 else None
+        debit = val if val < 0 else None
+        amount = val
+
+        transactions.append(
+            {
+                "date": dt,
+                "description": desc,
+                "doc": fields[2].strip(),
+                "credit": credit,
+                "debit": debit,
+                "balance": None,
+                "amount": amount,
+                "account": "Nubank",
+            }
+        )
+
+    return transactions
+
+
+def parse_ofx(filepath):
+    """Parse OFX/SGML: extract <STMTTRN> blocks with DTPOSTED, TRNAMT, MEMO."""
+    lines = read_file(filepath)
+    text = "\n".join(lines)
+
+    # Extract account info
+    acctid_m = re.search(r"<ACCTID>([^<\n]+)", text)
+    fid_m = re.search(r"<FID>([^<\n]+)", text)
+
+    fid_banks = {
+        "001": "Banco do Brasil",
+        "104": "Caixa",
+        "033": "Santander",
+        "077": "Inter",
+    }
+    bank = "OFX"
+    account = "OFX"
+    if fid_m:
+        fid = fid_m.group(1).strip()
+        bank = fid_banks.get(fid, f"Bank {fid}")
+        if acctid_m:
+            account = f"Ag {fid} / {acctid_m.group(1).strip()}"
+
+    # Extract transactions from STMTTRN blocks
+    transactions = []
+    blocks = re.findall(r"<STMTTRN>(.*?)</STMTTRN>", text, re.DOTALL)
+
+    for block in blocks:
+        dtposted_m = re.search(r"<DTPOSTED>(\d{8})", block)
+        trnamt_m = re.search(r"<TRNAMT>([^<\n]+)", block)
+        memo_m = re.search(r"<MEMO>([^<\n]+)", block)
+        checknum_m = re.search(r"<CHECKNUM>([^<\n]+)", block)
+
+        if not dtposted_m or not trnamt_m:
+            continue
+
+        raw_date = dtposted_m.group(1)
+        dt = f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:8]}"
+
+        val = Decimal(trnamt_m.group(1).strip())
+        desc = memo_m.group(1).strip() if memo_m else ""
+        doc = checknum_m.group(1).strip() if checknum_m else ""
+
+        credit = val if val > 0 else None
+        debit = val if val < 0 else None
+        amount = val
+
+        transactions.append(
+            {
+                "date": dt,
+                "description": desc,
+                "doc": doc,
+                "credit": credit,
+                "debit": debit,
+                "balance": None,
+                "amount": amount,
+                "account": account,
+            }
+        )
+
+    return transactions
+
+
 INTERNAL_PREFIXES = [
+    # Bradesco
     "Resgate Inv",
     "Resg.autom",
     "Resg/vencto",
@@ -137,6 +340,21 @@ INTERNAL_PREFIXES = [
     "Apl.invest",
     "Aplicacao Cdb",
     "Aplicacao Inve",
+    # Itaú
+    "REND PAGO APLIC AUT",
+    "RESGATE CDB",
+    "APLICACAO CDB",
+    # Banco do Brasil
+    "APLICACAO POUPANCA",
+    "RESGATE POUPANCA",
+    "APLICACAO FUNDOS",
+    "RESGATE FUNDOS",
+    # Caixa
+    "APL POUP",
+    "RES POUP",
+    # Nubank
+    "Aplicação RDB",
+    "Resgate RDB",
 ]
 
 
@@ -176,6 +394,57 @@ def compute_aggregates(transactions):
         "min_date": dates[0] if dates else "",
         "max_date": dates[-1] if dates else "",
     }
+
+
+def detect_format(filepath):
+    """Auto-detect file format from extension and content."""
+    lower = filepath.lower()
+    if lower.endswith(".ofx"):
+        return "ofx"
+
+    lines = read_file(filepath)
+    first_line = lines[0].strip().lower() if lines else ""
+
+    if "data,valor,identificador,descri" in first_line:
+        return "nubank"
+
+    if re.match(r"^extrato de: ag:", lines[0].strip(), re.IGNORECASE) if lines else False:
+        return "bradesco"
+
+    # Check for Itaú patterns
+    text_lower = "\n".join(lines[:10]).lower()
+    if "itaú" in text_lower or "itau" in text_lower:
+        return "itau"
+
+    # Check for DD/MM/YYYY dates (Itaú style)
+    for line in lines[:10]:
+        if re.match(r"^\d{2}/\d{2}/\d{4}", line.strip()):
+            return "itau"
+
+    # Default to Bradesco for semicolon-delimited with DD/MM/YY dates
+    for line in lines[:20]:
+        if re.match(r"^\d{2}/\d{2}/\d{2};", line.strip()):
+            return "bradesco"
+
+    return "bradesco"
+
+
+PARSERS = {
+    "bradesco": parse_bradesco_csv,
+    "itau": parse_itau_csv,
+    "nubank": parse_nubank_csv,
+    "ofx": parse_ofx,
+}
+
+
+def parse_file(filepath, fmt=None):
+    """Parse a file with auto-detection or explicit format."""
+    if fmt is None:
+        fmt = detect_format(filepath)
+    parser = PARSERS.get(fmt)
+    if parser is None:
+        raise ValueError(f"Unknown format: {fmt}")
+    return parser(filepath)
 
 
 def verify_go_json(go_json_path, expected):
@@ -289,14 +558,39 @@ def verify_xlsx(xlsx_path, expected):
 
 def main():
     parser = argparse.ArgumentParser(description="Verify extratos computations")
-    parser.add_argument("--csv", required=True, help="Bradesco CSV file to parse")
+    parser.add_argument("--csv", help="Single file to parse (backward compat)")
+    parser.add_argument(
+        "--format",
+        choices=["bradesco", "itau", "nubank", "ofx"],
+        help="File format (default: auto-detect)",
+    )
     parser.add_argument("--go-json", help="Go search result JSON to compare")
     parser.add_argument("--xlsx", help="Go-exported XLSX file to verify")
     parser.add_argument("--print-json", action="store_true", help="Print results as JSON")
+    parser.add_argument(
+        "--multi",
+        nargs="+",
+        help="Multiple files to parse and combine",
+    )
     args = parser.parse_args()
 
-    transactions = parse_bradesco_csv(args.csv)
-    agg = compute_aggregates(transactions)
+    if not args.csv and not args.multi:
+        parser.error("either --csv or --multi is required")
+
+    all_transactions = []
+
+    if args.multi:
+        for fpath in args.multi:
+            txns = parse_file(fpath)
+            print(
+                f"  {fpath}: {len(txns)} transactions",
+                file=sys.stderr,
+            )
+            all_transactions.extend(txns)
+    else:
+        all_transactions = parse_file(args.csv, args.format)
+
+    agg = compute_aggregates(all_transactions)
 
     print(
         f"Python parsed: {agg['count']} transactions, "
