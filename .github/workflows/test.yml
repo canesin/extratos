@@ -22,7 +22,6 @@ jobs:
 
       - name: Run Go tests
         run: go test -tags webkit2_41 -v -race -count=1 ./...
-        working-directory: extratos-app
 
   frontend:
     runs-on: ubuntu-latest
@@ -35,12 +34,12 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-        working-directory: extratos-app/frontend
+        working-directory: frontend
 
       - name: Type check
         run: npx tsc --noEmit
-        working-directory: extratos-app/frontend
+        working-directory: frontend
 
       - name: Run tests
         run: npx vitest run
-        working-directory: extratos-app/frontend
+        working-directory: frontend
