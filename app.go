@@ -255,8 +255,7 @@ func (a *AppService) ToggleInternal(id int64) string {
 	if a.db == nil {
 		return "Banco de dados não aberto"
 	}
-	_, err := a.db.conn.Exec(`UPDATE transactions SET is_internal = 1 - is_internal WHERE id = ?`, id)
-	if err != nil {
+	if err := a.db.ToggleInternal(id); err != nil {
 		return fmt.Sprintf("Erro: %v", err)
 	}
 	return ""

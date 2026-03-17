@@ -759,14 +759,18 @@ func TestToggleInternal(t *testing.T) {
 	}
 
 	// Toggle to internal
-	db.conn.Exec(`UPDATE transactions SET is_internal = 1 - is_internal WHERE id = 1`)
+	if err := db.ToggleInternal(1); err != nil {
+		t.Fatalf("toggle: %v", err)
+	}
 	db.conn.QueryRow(`SELECT is_internal FROM transactions WHERE id = 1`).Scan(&isInt)
 	if isInt != 1 {
 		t.Errorf("should be internal after toggle, got %d", isInt)
 	}
 
 	// Toggle back
-	db.conn.Exec(`UPDATE transactions SET is_internal = 1 - is_internal WHERE id = 1`)
+	if err := db.ToggleInternal(1); err != nil {
+		t.Fatalf("toggle back: %v", err)
+	}
 	db.conn.QueryRow(`SELECT is_internal FROM transactions WHERE id = 1`).Scan(&isInt)
 	if isInt != 0 {
 		t.Errorf("should be external after second toggle, got %d", isInt)
@@ -826,6 +830,17 @@ func TestSearchFilteredInternal(t *testing.T) {
 	}
 	if rExt.TotalCredit != 0 {
 		t.Errorf("external credit: expected 0, got %f", rExt.TotalCredit)
+	}
+
+	// Aggregates: internal filter should sum internal transactions
+	if rInt.TotalCredit != 1000.00 {
+		t.Errorf("internal credit: expected 1000, got %f", rInt.TotalCredit)
+	}
+	if rInt.TotalDebit != -500.00 {
+		t.Errorf("internal debit: expected -500, got %f", rInt.TotalDebit)
+	}
+	if rInt.NetAmount != 500.00 {
+		t.Errorf("internal net: expected 500, got %f", rInt.NetAmount)
 	}
 }
 
