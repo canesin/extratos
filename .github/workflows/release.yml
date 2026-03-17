@@ -101,6 +101,9 @@ jobs:
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.74
 
+      - name: Install frontend deps
+        run: cd frontend && npm install
+
       - name: Build universal binary
         run: wails3 task darwin:build:universal
 
