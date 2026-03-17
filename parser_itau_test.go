@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -19,6 +20,9 @@ func TestParseItauXLS(t *testing.T) {
 			t.Fatalf("abs path: %v", err)
 		}
 		t.Run(filepath.Base(f), func(t *testing.T) {
+			if _, err := os.Stat(abs); err != nil {
+				t.Skipf("file not available: %s", abs)
+			}
 			result, err := ParseFile(abs)
 			if err != nil {
 				t.Fatalf("ParseFile: %v", err)
