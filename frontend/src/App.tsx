@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { formatBRL } from "@/lib/utils";
 import { sortTransactions, type SortKey, type SortDir } from "@/lib/sort";
+import { DateRangePicker } from "@/components/ui/date-range-picker";
 
 interface Stats {
   total_transactions: number;
@@ -789,7 +790,7 @@ function MainScreen({ onSwitchDB }: { onSwitchDB: () => void }) {
       </header>
 
       {/* Search bar */}
-      <div className="px-4 py-2 bg-white border-b space-y-2">
+      <div className="px-4 py-2 bg-white border-b">
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
             <svg
@@ -815,15 +816,11 @@ function MainScreen({ onSwitchDB }: { onSwitchDB: () => void }) {
           <span className="text-xs text-muted-foreground whitespace-nowrap">
             {results.total.toLocaleString("pt-BR")} resultado{results.total !== 1 ? "s" : ""}
           </span>
-        </div>
-        <div className="flex items-center gap-2">
-          <Input type="date" value={dateFrom} onChange={(e) => onDateChange(e.target.value, dateTo)} className="w-32 h-8 text-xs" />
-          <span className="text-muted-foreground text-xs">a</span>
-          <Input type="date" value={dateTo} onChange={(e) => onDateChange(dateFrom, e.target.value)} className="w-32 h-8 text-xs" />
-          {(dateFrom || dateTo) && (
-            <button onClick={() => onDateChange("", "")} className="text-muted-foreground hover:text-foreground cursor-pointer text-xs" title="Limpar datas">&#x2715;</button>
-          )}
-          <div className="flex-1" />
+          <DateRangePicker
+            from={dateFrom}
+            to={dateTo}
+            onChange={(df, dt) => onDateChange(df, dt)}
+          />
           <div className="flex border rounded-md overflow-hidden text-xs">
             {([["", "Todas"], ["external", "Externas"], ["internal", "Internas"]] as ["" | "external" | "internal", string][]).map(([val, label]) => (
               <button
