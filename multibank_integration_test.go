@@ -17,13 +17,13 @@ import (
 // Combined: 56 txns, credits=228200.00, debits=-106291.70, net=121908.30, 2026-01-02..2026-02-20
 
 const (
-	multiBankWantTotal       = 56
-	multiBankWantCredit      = 228200.00
-	multiBankWantDebit       = -106291.70
-	multiBankWantNet         = 121908.30
-	multiBankWantMinDate     = "2026-01-02"
-	multiBankWantMaxDate     = "2026-02-20"
-	multiBankWantBankCount   = 4
+	multiBankWantTotal     = 56
+	multiBankWantCredit    = 228200.00
+	multiBankWantDebit     = -106291.70
+	multiBankWantNet       = 121908.30
+	multiBankWantMinDate   = "2026-01-02"
+	multiBankWantMaxDate   = "2026-02-20"
+	multiBankWantBankCount = 4
 )
 
 var syntheticFiles = []struct {
@@ -305,7 +305,11 @@ func TestMultiBankExport(t *testing.T) {
 		t.Fatalf("Search for JSON export: %v", err)
 	}
 	goJSONPath := filepath.Join(tmpDir, "multibank-go-result.json")
-	goJSON, _ := json.Marshal(sr)
-	os.WriteFile(goJSONPath, goJSON, 0644)
+	goJSON, err2 := json.Marshal(sr)
+	if err2 != nil {
+		t.Fatalf("json.Marshal: %v", err2)
+	}
+	if err2 = os.WriteFile(goJSONPath, goJSON, 0644); err2 != nil {
+		t.Fatalf("WriteFile: %v", err2)
+	}
 }
-

@@ -408,7 +408,7 @@ def detect_format(filepath):
     if "data,valor,identificador,descri" in first_line:
         return "nubank"
 
-    if re.match(r"^extrato de: ag:", lines[0].strip(), re.IGNORECASE) if lines else False:
+    if lines and re.match(r"^extrato de: ag:", lines[0].strip(), re.IGNORECASE):
         return "bradesco"
 
     # Check for Itaú patterns
