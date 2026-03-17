@@ -115,7 +115,7 @@ func TestSyntheticPipeline(t *testing.T) {
 
 	// --- Step 4: Export XLSX ---
 	xlsxPath := filepath.Join(tmpDir, "test-export.xlsx")
-	allTxns, err := db.SearchAll("")
+	allTxns, err := db.SearchAll("", "")
 	if err != nil {
 		t.Fatalf("SearchAll: %v", err)
 	}

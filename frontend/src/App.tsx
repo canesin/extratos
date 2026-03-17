@@ -458,7 +458,14 @@ function FilePreviewCard({
                     {t.date}
                   </td>
                   <td className="py-1 px-2 max-w-sm truncate" title={t.description}>
-                    {t.description}
+                    <span className="inline-flex items-center gap-1">
+                      {t.description}
+                      {t.is_internal && (
+                        <Badge variant="outline" className="text-[9px] px-0.5 py-0 border-amber-400 text-amber-700 font-normal shrink-0">
+                          interno
+                        </Badge>
+                      )}
+                    </span>
                   </td>
                   <td className="py-1 px-2 text-right text-green-700 font-mono">
                     {formatBRL(t.credit)}
@@ -541,6 +548,9 @@ function MainScreen({ onSwitchDB }: { onSwitchDB: () => void }) {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
 
+  // Internal transfer filter state
+  const [showInternal, setShowInternal] = useState<"" | "external" | "internal">("");
+
   // Monthly summary state
   const [showMonthly, setShowMonthly] = useState(false);
   const [monthlySummary, setMonthlySummary] = useState<MonthlySummary[]>([]);
@@ -559,15 +569,15 @@ function MainScreen({ onSwitchDB }: { onSwitchDB: () => void }) {
     setStats(s as Stats);
   }, []);
 
-  const doSearch = useCallback(async (q: string, p: number, df: string = dateFrom, dt: string = dateTo) => {
+  const doSearch = useCallback(async (q: string, p: number, df: string = dateFrom, dt: string = dateTo, si: string = showInternal) => {
     setLoading(true);
     try {
-      const r = await AppService.SearchFiltered(q, PAGE_SIZE, p * PAGE_SIZE, df, dt);
+      const r = await AppService.SearchFiltered(q, PAGE_SIZE, p * PAGE_SIZE, df, dt, si);
       if (r) setResults(r);
     } finally {
       setLoading(false);
     }
-  }, [dateFrom, dateTo]);
+  }, [dateFrom, dateTo, showInternal]);
 
   useEffect(() => {
     AppService.GetDBError().then((err: string) => {
@@ -576,8 +586,8 @@ function MainScreen({ onSwitchDB }: { onSwitchDB: () => void }) {
     AppService.GetCurrentDB().then((name: string) => setDbName(name));
     loadStats();
     // Initial load — call API directly to avoid depending on doSearch
-    // (doSearch changes when dateFrom/dateTo change, which would re-trigger this effect)
-    AppService.SearchFiltered("", PAGE_SIZE, 0, "", "").then(r => {
+    // (doSearch changes when dateFrom/dateTo/showInternal change, which would re-trigger this effect)
+    AppService.SearchFiltered("", PAGE_SIZE, 0, "", "", "").then(r => {
       if (r) setResults(r);
     });
   }, [loadStats]);
@@ -597,6 +607,13 @@ function MainScreen({ onSwitchDB }: { onSwitchDB: () => void }) {
     setSortKey(null);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => doSearch(query, 0, df, dt), 250);
+  };
+
+  const onInternalChange = (val: "" | "external" | "internal") => {
+    setShowInternal(val);
+    setPage(0);
+    setSortKey(null);
+    doSearch(query, 0, dateFrom, dateTo, val);
   };
 
   // --- Import preview flow ---
@@ -655,18 +672,27 @@ function MainScreen({ onSwitchDB }: { onSwitchDB: () => void }) {
     setImportPreview(null);
   };
 
+  const handleToggleInternal = async (id: number) => {
+    const err = await AppService.ToggleInternal(id);
+    if (err) {
+      setMessage(`err:${err}`);
+    } else {
+      doSearch(query, page);
+    }
+  };
+
   // Load monthly summary when toggled or search results change
   useEffect(() => {
     if (showMonthly) {
-      AppService.GetMonthlySummary(query, dateFrom, dateTo).then(setMonthlySummary);
+      AppService.GetMonthlySummary(query, dateFrom, dateTo, showInternal).then(setMonthlySummary);
     }
-  }, [showMonthly, results, query, dateFrom, dateTo]);
+  }, [showMonthly, results, query, dateFrom, dateTo, showInternal]);
 
   const handleExport = async () => {
     setExporting(true);
     setMessage("");
     try {
-      const msg = await AppService.ExportResults(query);
+      const msg = await AppService.ExportResults(query, showInternal);
       if (msg.startsWith("Erro") || msg.startsWith("Nenhuma")) {
         setMessage(`err:${msg}`);
       } else {
@@ -796,6 +822,21 @@ function MainScreen({ onSwitchDB }: { onSwitchDB: () => void }) {
           {(dateFrom || dateTo) && (
             <button onClick={() => onDateChange("", "")} className="text-muted-foreground hover:text-foreground cursor-pointer" title="Limpar datas">&#x2715;</button>
           )}
+          <div className="flex border rounded-md overflow-hidden text-xs">
+            {([["", "Todas"], ["external", "Externas"], ["internal", "Internas"]] as ["" | "external" | "internal", string][]).map(([val, label]) => (
+              <button
+                key={val}
+                onClick={() => onInternalChange(val)}
+                className={`px-2.5 py-1.5 cursor-pointer transition-colors ${
+                  showInternal === val
+                    ? "bg-foreground text-white"
+                    : "hover:bg-muted/50"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -835,6 +876,11 @@ function MainScreen({ onSwitchDB }: { onSwitchDB: () => void }) {
             {results.min_date && (
               <div className="text-xs text-muted-foreground">
                 {results.min_date} — {results.max_date}
+              </div>
+            )}
+            {results.internal_count > 0 && showInternal === "" && (
+              <div className="text-xs text-amber-600 mt-0.5">
+                ({results.internal_count} interna{results.internal_count !== 1 ? "s" : ""} excluída{results.internal_count !== 1 ? "s" : ""} dos totais)
               </div>
             )}
           </div>
@@ -1017,7 +1063,7 @@ function MainScreen({ onSwitchDB }: { onSwitchDB: () => void }) {
               sortedTxns.map((t) => (
                 <tr
                   key={t.id}
-                  className="border-b border-border/50 hover:bg-muted/50 transition-colors"
+                  className={`border-b border-border/50 hover:bg-muted/50 transition-colors ${t.is_internal ? "bg-amber-50/50" : ""}`}
                 >
                   <td className="py-2 px-3 whitespace-nowrap font-mono text-xs">
                     {t.date}
@@ -1026,7 +1072,14 @@ function MainScreen({ onSwitchDB }: { onSwitchDB: () => void }) {
                     className="py-2 px-3 max-w-md truncate"
                     title={t.description}
                   >
-                    {t.description}
+                    <span className="inline-flex items-center gap-1.5">
+                      {t.description}
+                      {t.is_internal && (
+                        <Badge variant="outline" className="text-[10px] px-1 py-0 border-amber-400 text-amber-700 font-normal shrink-0">
+                          interno
+                        </Badge>
+                      )}
+                    </span>
                   </td>
                   <td className="py-2 px-3 text-muted-foreground text-xs">
                     {t.doc}
@@ -1044,9 +1097,25 @@ function MainScreen({ onSwitchDB }: { onSwitchDB: () => void }) {
                     {t.account}
                   </td>
                   <td className="py-2 px-3">
-                    <Badge variant="secondary" className="text-xs">
-                      {t.bank}
-                    </Badge>
+                    <div className="flex items-center gap-1">
+                      <Badge variant="secondary" className="text-xs">
+                        {t.bank}
+                      </Badge>
+                      <button
+                        onClick={() => handleToggleInternal(t.id)}
+                        className={`p-0.5 rounded cursor-pointer transition-colors ${
+                          t.is_internal
+                            ? "text-amber-600 hover:text-amber-800 hover:bg-amber-100"
+                            : "text-muted-foreground/30 hover:text-muted-foreground hover:bg-muted"
+                        }`}
+                        title={t.is_internal ? "Marcar como externa" : "Marcar como interna"}
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                            d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                        </svg>
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))

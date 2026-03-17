@@ -313,7 +313,7 @@ func TestSearchAll_DB(t *testing.T) {
 	db := newTestDB(t)
 	db.InsertTransactions(sampleTransactions())
 
-	txns, err := db.SearchAll("Fernanda")
+	txns, err := db.SearchAll("Fernanda", "")
 	if err != nil {
 		t.Fatalf("searchAll: %v", err)
 	}
@@ -321,7 +321,7 @@ func TestSearchAll_DB(t *testing.T) {
 		t.Errorf("expected 1 result, got %d", len(txns))
 	}
 
-	all, _ := db.SearchAll("")
+	all, _ := db.SearchAll("", "")
 	if len(all) != 3 {
 		t.Errorf("expected 3 results, got %d", len(all))
 	}
@@ -525,7 +525,7 @@ func TestSearchFiltered_DateRange(t *testing.T) {
 	db.InsertTransactions(sampleTransactions())
 
 	// No date filter — should return all 3
-	r1, err := db.SearchFiltered("", 100, 0, "", "")
+	r1, err := db.SearchFiltered("", 100, 0, "", "", "")
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -534,7 +534,7 @@ func TestSearchFiltered_DateRange(t *testing.T) {
 	}
 
 	// dateFrom only — from 2026-01-12 onwards should include 2 transactions
-	r2, err := db.SearchFiltered("", 100, 0, "2026-01-12", "")
+	r2, err := db.SearchFiltered("", 100, 0, "2026-01-12", "", "")
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -543,7 +543,7 @@ func TestSearchFiltered_DateRange(t *testing.T) {
 	}
 
 	// dateTo only — up to 2026-01-12 should include 2 transactions
-	r3, err := db.SearchFiltered("", 100, 0, "", "2026-01-12")
+	r3, err := db.SearchFiltered("", 100, 0, "", "2026-01-12", "")
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -552,7 +552,7 @@ func TestSearchFiltered_DateRange(t *testing.T) {
 	}
 
 	// Both dates — exactly Jan 2026
-	r4, err := db.SearchFiltered("", 100, 0, "2026-01-01", "2026-01-31")
+	r4, err := db.SearchFiltered("", 100, 0, "2026-01-01", "2026-01-31", "")
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -568,7 +568,7 @@ func TestSearchFiltered_DateRange(t *testing.T) {
 	}
 
 	// Date filter + FTS query
-	r5, err := db.SearchFiltered("Fernanda", 100, 0, "2026-01-01", "2026-01-31")
+	r5, err := db.SearchFiltered("Fernanda", 100, 0, "2026-01-01", "2026-01-31", "")
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -577,7 +577,7 @@ func TestSearchFiltered_DateRange(t *testing.T) {
 	}
 
 	// Date filter that excludes all results
-	r6, err := db.SearchFiltered("Fernanda", 100, 0, "2026-03-01", "2026-03-31")
+	r6, err := db.SearchFiltered("Fernanda", 100, 0, "2026-03-01", "2026-03-31", "")
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -586,7 +586,7 @@ func TestSearchFiltered_DateRange(t *testing.T) {
 	}
 
 	// Multi-term with date filter — clause summaries should also be filtered
-	r7, err := db.SearchFiltered("Fernanda, Brla", 100, 0, "2026-01-01", "2026-01-31")
+	r7, err := db.SearchFiltered("Fernanda, Brla", 100, 0, "2026-01-01", "2026-01-31", "")
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -611,7 +611,7 @@ func TestGetMonthlySummary(t *testing.T) {
 	db.InsertTransactions(sampleTransactions())
 
 	// All months, no filter
-	summaries, err := db.GetMonthlySummary("", "", "")
+	summaries, err := db.GetMonthlySummary("", "", "", "")
 	if err != nil {
 		t.Fatalf("monthly summary: %v", err)
 	}
@@ -644,7 +644,7 @@ func TestGetMonthlySummary(t *testing.T) {
 	}
 
 	// With FTS query
-	summaries2, err := db.GetMonthlySummary("Fernanda", "", "")
+	summaries2, err := db.GetMonthlySummary("Fernanda", "", "", "")
 	if err != nil {
 		t.Fatalf("monthly summary with query: %v", err)
 	}
@@ -656,7 +656,7 @@ func TestGetMonthlySummary(t *testing.T) {
 	}
 
 	// With date filter
-	summaries3, err := db.GetMonthlySummary("", "2026-02-01", "2026-02-28")
+	summaries3, err := db.GetMonthlySummary("", "2026-02-01", "2026-02-28", "")
 	if err != nil {
 		t.Fatalf("monthly summary with dates: %v", err)
 	}
@@ -687,5 +687,179 @@ func TestBuildFTSQuery(t *testing.T) {
 				t.Errorf("buildFTSQuery(%q) = %q, want %q", tt.input, got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestInsertInternalTransactions(t *testing.T) {
+	db := newTestDB(t)
+	txns := []Transaction{
+		{
+			Date: "2026-01-05", Description: "Resgate Inv Programado",
+			Credit: ptr(1000.00), Account: "123", Bank: "Bradesco", SourceFile: "test.csv",
+		},
+		{
+			Date: "2026-01-06", Description: "Apl.invest Automatico",
+			Debit: ptr(-500.00), Amount: ptr(-500.00), Account: "123", Bank: "Bradesco", SourceFile: "test.csv",
+		},
+		{
+			Date: "2026-01-07", Description: "Transfe Pix | Des: Fulano",
+			Debit: ptr(-200.00), Amount: ptr(-200.00), Account: "123", Bank: "Bradesco", SourceFile: "test.csv",
+		},
+	}
+	db.InsertTransactions(txns)
+
+	// Verify is_internal flags
+	var isInt int
+	db.conn.QueryRow(`SELECT is_internal FROM transactions WHERE description LIKE 'Resgate%'`).Scan(&isInt)
+	if isInt != 1 {
+		t.Errorf("Resgate should be internal, got %d", isInt)
+	}
+	db.conn.QueryRow(`SELECT is_internal FROM transactions WHERE description LIKE 'Apl.invest%'`).Scan(&isInt)
+	if isInt != 1 {
+		t.Errorf("Apl.invest should be internal, got %d", isInt)
+	}
+	db.conn.QueryRow(`SELECT is_internal FROM transactions WHERE description LIKE 'Transfe%'`).Scan(&isInt)
+	if isInt != 0 {
+		t.Errorf("Transfe Pix should NOT be internal, got %d", isInt)
+	}
+
+	// Verify IsInternal field on returned transaction
+	result, _ := db.Search("", 100, 0)
+	var foundInternal, foundExternal bool
+	for _, tx := range result.Transactions {
+		if tx.IsInternal {
+			foundInternal = true
+		} else {
+			foundExternal = true
+		}
+	}
+	if !foundInternal {
+		t.Error("expected at least one internal transaction in results")
+	}
+	if !foundExternal {
+		t.Error("expected at least one external transaction in results")
+	}
+}
+
+func TestToggleInternal(t *testing.T) {
+	db := newTestDB(t)
+	txns := []Transaction{
+		{
+			Date: "2026-01-05", Description: "Transfe Pix | Normal",
+			Debit: ptr(-100.00), Amount: ptr(-100.00), Account: "123", Bank: "Bradesco", SourceFile: "test.csv",
+		},
+	}
+	db.InsertTransactions(txns)
+
+	// Should start as external
+	var isInt int
+	db.conn.QueryRow(`SELECT is_internal FROM transactions WHERE id = 1`).Scan(&isInt)
+	if isInt != 0 {
+		t.Errorf("should start as external, got %d", isInt)
+	}
+
+	// Toggle to internal
+	db.conn.Exec(`UPDATE transactions SET is_internal = 1 - is_internal WHERE id = 1`)
+	db.conn.QueryRow(`SELECT is_internal FROM transactions WHERE id = 1`).Scan(&isInt)
+	if isInt != 1 {
+		t.Errorf("should be internal after toggle, got %d", isInt)
+	}
+
+	// Toggle back
+	db.conn.Exec(`UPDATE transactions SET is_internal = 1 - is_internal WHERE id = 1`)
+	db.conn.QueryRow(`SELECT is_internal FROM transactions WHERE id = 1`).Scan(&isInt)
+	if isInt != 0 {
+		t.Errorf("should be external after second toggle, got %d", isInt)
+	}
+}
+
+func TestSearchFilteredInternal(t *testing.T) {
+	db := newTestDB(t)
+	txns := []Transaction{
+		{
+			Date: "2026-01-05", Description: "Resgate Inv Programado",
+			Credit: ptr(1000.00), Amount: ptr(1000.00), Account: "123", Bank: "Bradesco", SourceFile: "test.csv",
+		},
+		{
+			Date: "2026-01-06", Description: "Apl.invest Automatico",
+			Debit: ptr(-500.00), Amount: ptr(-500.00), Account: "123", Bank: "Bradesco", SourceFile: "test.csv",
+		},
+		{
+			Date: "2026-01-07", Description: "Transfe Pix | Des: Fulano",
+			Debit: ptr(-200.00), Amount: ptr(-200.00), Account: "123", Bank: "Bradesco", SourceFile: "test.csv",
+		},
+	}
+	db.InsertTransactions(txns)
+
+	// All transactions
+	rAll, _ := db.SearchFiltered("", 100, 0, "", "", "")
+	if rAll.Total != 3 {
+		t.Errorf("all: expected 3, got %d", rAll.Total)
+	}
+	if rAll.InternalCount != 2 {
+		t.Errorf("internal count: expected 2, got %d", rAll.InternalCount)
+	}
+
+	// External only
+	rExt, _ := db.SearchFiltered("", 100, 0, "", "", "external")
+	if rExt.Total != 1 {
+		t.Errorf("external: expected 1, got %d", rExt.Total)
+	}
+	if rExt.Transactions[0].Description != "Transfe Pix | Des: Fulano" {
+		t.Errorf("external: wrong transaction: %s", rExt.Transactions[0].Description)
+	}
+
+	// Internal only
+	rInt, _ := db.SearchFiltered("", 100, 0, "", "", "internal")
+	if rInt.Total != 2 {
+		t.Errorf("internal: expected 2, got %d", rInt.Total)
+	}
+	for _, tx := range rInt.Transactions {
+		if !tx.IsInternal {
+			t.Errorf("internal filter returned non-internal: %s", tx.Description)
+		}
+	}
+
+	// Aggregates: external filter should only sum external transactions
+	if rExt.TotalDebit != -200.00 {
+		t.Errorf("external debit: expected -200, got %f", rExt.TotalDebit)
+	}
+	if rExt.TotalCredit != 0 {
+		t.Errorf("external credit: expected 0, got %f", rExt.TotalCredit)
+	}
+}
+
+func TestBackfillIsInternal(t *testing.T) {
+	db := newTestDB(t)
+
+	// Insert transactions bypassing IsInternalTransfer (simulating old schema)
+	tx, _ := db.conn.Begin()
+	stmt, _ := tx.Prepare(`INSERT INTO transactions
+		(date, description, doc, credit, debit, balance, amount, account, bank, source_file, import_hash, search_text, is_internal)
+		VALUES (?, ?, '', ?, ?, ?, ?, '123', 'Bradesco', 'test.csv', ?, '', 0)`)
+	stmt.Exec("2026-01-05", "Resgate Inv Programado", 1000.0, nil, nil, 1000.0, "hash1")
+	stmt.Exec("2026-01-06", "Apl.invest Auto", nil, -500.0, nil, -500.0, "hash2")
+	stmt.Exec("2026-01-07", "Transfe Pix Normal", nil, -200.0, nil, -200.0, "hash3")
+	stmt.Close()
+	tx.Commit()
+
+	// All should be is_internal=0
+	var count int
+	db.conn.QueryRow(`SELECT COUNT(*) FROM transactions WHERE is_internal = 1`).Scan(&count)
+	if count != 0 {
+		t.Errorf("before backfill: expected 0 internal, got %d", count)
+	}
+
+	// Run backfill
+	db.backfillIsInternal()
+
+	db.conn.QueryRow(`SELECT COUNT(*) FROM transactions WHERE is_internal = 1`).Scan(&count)
+	if count != 2 {
+		t.Errorf("after backfill: expected 2 internal, got %d", count)
+	}
+
+	db.conn.QueryRow(`SELECT COUNT(*) FROM transactions WHERE is_internal = 0`).Scan(&count)
+	if count != 1 {
+		t.Errorf("after backfill: expected 1 external, got %d", count)
 	}
 }

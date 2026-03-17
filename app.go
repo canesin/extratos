@@ -251,22 +251,33 @@ func (a *AppService) Search(query string, limit, offset int) *SearchResult {
 	return result
 }
 
-func (a *AppService) SearchFiltered(query string, limit, offset int, dateFrom, dateTo string) *SearchResult {
+func (a *AppService) ToggleInternal(id int64) string {
+	if a.db == nil {
+		return "Banco de dados não aberto"
+	}
+	_, err := a.db.conn.Exec(`UPDATE transactions SET is_internal = 1 - is_internal WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Sprintf("Erro: %v", err)
+	}
+	return ""
+}
+
+func (a *AppService) SearchFiltered(query string, limit, offset int, dateFrom, dateTo, showInternal string) *SearchResult {
 	if a.db == nil {
 		return &SearchResult{Transactions: []Transaction{}, Total: 0}
 	}
-	result, err := a.db.SearchFiltered(query, limit, offset, dateFrom, dateTo)
+	result, err := a.db.SearchFiltered(query, limit, offset, dateFrom, dateTo, showInternal)
 	if err != nil {
 		return &SearchResult{Transactions: []Transaction{}, Total: 0}
 	}
 	return result
 }
 
-func (a *AppService) GetMonthlySummary(query string, dateFrom, dateTo string) []MonthlySummary {
+func (a *AppService) GetMonthlySummary(query string, dateFrom, dateTo, showInternal string) []MonthlySummary {
 	if a.db == nil {
 		return []MonthlySummary{}
 	}
-	summaries, err := a.db.GetMonthlySummary(query, dateFrom, dateTo)
+	summaries, err := a.db.GetMonthlySummary(query, dateFrom, dateTo, showInternal)
 	if err != nil {
 		return []MonthlySummary{}
 	}
@@ -284,11 +295,11 @@ func (a *AppService) GetStats() map[string]any {
 	return stats
 }
 
-func (a *AppService) ExportResults(query string) string {
+func (a *AppService) ExportResults(query, showInternal string) string {
 	if a.db == nil {
 		return a.dbError
 	}
-	txns, err := a.db.SearchAll(query)
+	txns, err := a.db.SearchAll(query, showInternal)
 	if err != nil {
 		return fmt.Sprintf("Erro: %v", err)
 	}
@@ -337,8 +348,9 @@ func buildFilePreview(txns []Transaction, filename, bank string) FilePreview {
 	// Compute aggregates
 	var minDate, maxDate string
 	accounts := make(map[string]bool)
-	for _, t := range txns {
-		if !IsInternalTransfer(t.Description) {
+	for i, t := range txns {
+		txns[i].IsInternal = IsInternalTransfer(t.Description)
+		if !txns[i].IsInternal {
 			if t.Credit != nil {
 				fp.TotalCredit += *t.Credit
 			}
