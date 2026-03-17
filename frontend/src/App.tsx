@@ -740,7 +740,7 @@ function MainScreen({ onSwitchDB }: { onSwitchDB: () => void }) {
       )}
 
       {/* Header */}
-      <header className="border-b bg-white px-6 py-4">
+      <header className="border-b bg-white px-4 py-3">
         <div className="flex items-center justify-between">
           <div>
             <div className="flex items-center gap-2">
@@ -789,8 +789,8 @@ function MainScreen({ onSwitchDB }: { onSwitchDB: () => void }) {
       </header>
 
       {/* Search bar */}
-      <div className="px-6 py-3 bg-white border-b">
-        <div className="flex items-center gap-3">
+      <div className="px-4 py-2 bg-white border-b space-y-2">
+        <div className="flex items-center gap-2">
           <div className="relative flex-1">
             <svg
               className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground"
@@ -806,28 +806,30 @@ function MainScreen({ onSwitchDB }: { onSwitchDB: () => void }) {
               />
             </svg>
             <Input
-              placeholder="Buscar transações (separe com vírgula para múltiplos: Mayte, Correa)..."
+              placeholder="Buscar (separe com vírgula para múltiplos)..."
               value={query}
               onChange={(e) => onQueryChange(e.target.value)}
-              className="pl-10 h-10"
+              className="pl-10 h-9"
             />
           </div>
-          <span className="text-sm text-muted-foreground whitespace-nowrap">
-            {results.total.toLocaleString("pt-BR")} resultado
-            {results.total !== 1 ? "s" : ""}
+          <span className="text-xs text-muted-foreground whitespace-nowrap">
+            {results.total.toLocaleString("pt-BR")} resultado{results.total !== 1 ? "s" : ""}
           </span>
-          <Input type="date" value={dateFrom} onChange={(e) => onDateChange(e.target.value, dateTo)} className="w-36 h-10" />
-          <span className="text-muted-foreground text-sm">a</span>
-          <Input type="date" value={dateTo} onChange={(e) => onDateChange(dateFrom, e.target.value)} className="w-36 h-10" />
+        </div>
+        <div className="flex items-center gap-2">
+          <Input type="date" value={dateFrom} onChange={(e) => onDateChange(e.target.value, dateTo)} className="w-32 h-8 text-xs" />
+          <span className="text-muted-foreground text-xs">a</span>
+          <Input type="date" value={dateTo} onChange={(e) => onDateChange(dateFrom, e.target.value)} className="w-32 h-8 text-xs" />
           {(dateFrom || dateTo) && (
-            <button onClick={() => onDateChange("", "")} className="text-muted-foreground hover:text-foreground cursor-pointer" title="Limpar datas">&#x2715;</button>
+            <button onClick={() => onDateChange("", "")} className="text-muted-foreground hover:text-foreground cursor-pointer text-xs" title="Limpar datas">&#x2715;</button>
           )}
+          <div className="flex-1" />
           <div className="flex border rounded-md overflow-hidden text-xs">
             {([["", "Todas"], ["external", "Externas"], ["internal", "Internas"]] as ["" | "external" | "internal", string][]).map(([val, label]) => (
               <button
                 key={val}
                 onClick={() => onInternalChange(val)}
-                className={`px-2.5 py-1.5 cursor-pointer transition-colors ${
+                className={`px-2 py-1 cursor-pointer transition-colors ${
                   showInternal === val
                     ? "bg-foreground text-white"
                     : "hover:bg-muted/50"
@@ -842,7 +844,7 @@ function MainScreen({ onSwitchDB }: { onSwitchDB: () => void }) {
 
       {/* Bank/account quick filter */}
       {stats && ((stats.banks && stats.banks.length > 1) || (stats.accounts && stats.accounts.length > 1)) && (
-        <div className="px-6 py-1.5 bg-white border-b flex items-center gap-2 flex-wrap">
+        <div className="px-4 py-1.5 bg-white border-b flex items-center gap-2 flex-wrap">
           <span className="text-xs text-muted-foreground mr-1">Filtrar:</span>
           {stats.banks?.map(b => (
             <button key={b} onClick={() => onQueryChange(b)}
@@ -867,39 +869,39 @@ function MainScreen({ onSwitchDB }: { onSwitchDB: () => void }) {
 
       {/* Overall summary bar */}
       {results.total > 0 && (
-        <div className="mx-6 mt-3 grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div className="rounded-lg border bg-white px-4 py-3">
-            <div className="text-xs text-muted-foreground">Transações</div>
-            <div className="text-lg font-semibold">
+        <div className="mx-4 mt-3 grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="rounded-lg border bg-white px-3 py-2">
+            <div className="text-[11px] text-muted-foreground">Transações</div>
+            <div className="text-base font-semibold">
               {results.total.toLocaleString("pt-BR")}
             </div>
             {results.min_date && (
-              <div className="text-xs text-muted-foreground">
+              <div className="text-[11px] text-muted-foreground">
                 {results.min_date} — {results.max_date}
               </div>
             )}
             {results.internal_count > 0 && showInternal === "" && (
-              <div className="text-xs text-amber-600 mt-0.5">
+              <div className="text-[11px] text-amber-600 mt-0.5">
                 ({results.internal_count} interna{results.internal_count !== 1 ? "s" : ""} excluída{results.internal_count !== 1 ? "s" : ""} dos totais)
               </div>
             )}
           </div>
-          <div className="rounded-lg border bg-white px-4 py-3">
-            <div className="text-xs text-muted-foreground">Total Créditos</div>
-            <div className="text-lg font-semibold text-green-700">
+          <div className="rounded-lg border bg-white px-3 py-2">
+            <div className="text-[11px] text-muted-foreground">Total Créditos</div>
+            <div className="text-base font-semibold text-green-700">
               {formatBRL(results.total_credit)}
             </div>
           </div>
-          <div className="rounded-lg border bg-white px-4 py-3">
-            <div className="text-xs text-muted-foreground">Total Débitos</div>
-            <div className="text-lg font-semibold text-red-700">
+          <div className="rounded-lg border bg-white px-3 py-2">
+            <div className="text-[11px] text-muted-foreground">Total Débitos</div>
+            <div className="text-base font-semibold text-red-700">
               {formatBRL(results.total_debit)}
             </div>
           </div>
-          <div className="rounded-lg border bg-white px-4 py-3">
-            <div className="text-xs text-muted-foreground">Saldo Líquido</div>
+          <div className="rounded-lg border bg-white px-3 py-2">
+            <div className="text-[11px] text-muted-foreground">Saldo Líquido</div>
             <div
-              className={`text-lg font-semibold ${results.net_amount >= 0 ? "text-green-700" : "text-red-700"}`}
+              className={`text-base font-semibold ${results.net_amount >= 0 ? "text-green-700" : "text-red-700"}`}
             >
               {formatBRL(results.net_amount)}
             </div>
@@ -910,13 +912,13 @@ function MainScreen({ onSwitchDB }: { onSwitchDB: () => void }) {
       {/* Monthly summary toggle */}
       {results.total > 0 && (
         <>
-          <div className="mx-6 mt-2 flex justify-end">
+          <div className="mx-4 mt-2 flex justify-end">
             <button onClick={() => setShowMonthly(!showMonthly)} className="text-xs text-muted-foreground hover:text-foreground cursor-pointer">
               {showMonthly ? "Ocultar resumo mensal" : "Resumo mensal \u25BE"}
             </button>
           </div>
           {showMonthly && monthlySummary.length > 0 && (
-            <div className="mx-6 mt-2 rounded-lg border bg-white overflow-auto max-h-72">
+            <div className="mx-4 mt-2 rounded-lg border bg-white overflow-auto max-h-72">
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-muted/80 backdrop-blur-sm">
                   <tr>
@@ -946,7 +948,7 @@ function MainScreen({ onSwitchDB }: { onSwitchDB: () => void }) {
 
       {/* Per-clause summaries */}
       {results.clause_summaries && results.clause_summaries.length > 0 && (
-        <div className="mx-6 mt-3 space-y-2">
+        <div className="mx-4 mt-3 space-y-2">
           <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
             Por termo de busca
           </div>
@@ -954,7 +956,7 @@ function MainScreen({ onSwitchDB }: { onSwitchDB: () => void }) {
             {results.clause_summaries.map((cs: ClauseSummary, idx: number) => (
               <div
                 key={idx}
-                className="rounded-lg border bg-white px-4 py-2.5 flex items-center justify-between"
+                className="rounded-lg border bg-white px-3 py-2 flex items-center justify-between"
               >
                 <div>
                   <div className="font-medium text-sm">{cs.clause}</div>
@@ -984,7 +986,7 @@ function MainScreen({ onSwitchDB }: { onSwitchDB: () => void }) {
 
       {/* DB init error */}
       {dbError && (
-        <div className="mx-6 mt-3 px-4 py-3 rounded-md text-sm bg-red-50 text-red-900 border border-red-300 font-mono whitespace-pre-wrap select-all">
+        <div className="mx-4 mt-3 px-4 py-3 rounded-md text-sm bg-red-50 text-red-900 border border-red-300 font-mono whitespace-pre-wrap select-all">
           <strong>Erro de inicialização do banco de dados:</strong>
           <br />
           {dbError}
@@ -1011,7 +1013,7 @@ function MainScreen({ onSwitchDB }: { onSwitchDB: () => void }) {
       )}
 
       {/* Table */}
-      <div className="flex-1 overflow-auto px-6 py-3">
+      <div className="flex-1 overflow-auto px-4 py-2">
         <table className="w-full text-sm border-collapse">
           <thead className="sticky top-0 bg-muted/80 backdrop-blur-sm z-10">
             <tr>
@@ -1029,7 +1031,7 @@ function MainScreen({ onSwitchDB }: { onSwitchDB: () => void }) {
               ).map(([key, label, align]) => (
                 <th
                   key={key}
-                  className={`${align} py-2 px-3 font-medium text-muted-foreground cursor-pointer select-none hover:text-foreground transition-colors group`}
+                  className={`${align} py-1.5 px-2 font-medium text-muted-foreground cursor-pointer select-none hover:text-foreground transition-colors group text-xs`}
                   onClick={() => toggleSort(key)}
                 >
                   {label}
@@ -1065,38 +1067,38 @@ function MainScreen({ onSwitchDB }: { onSwitchDB: () => void }) {
                   key={t.id}
                   className={`border-b border-border/50 hover:bg-muted/50 transition-colors ${t.is_internal ? "bg-amber-50/50" : ""}`}
                 >
-                  <td className="py-2 px-3 whitespace-nowrap font-mono text-xs">
+                  <td className="py-1.5 px-2 whitespace-nowrap font-mono text-xs">
                     {t.date}
                   </td>
                   <td
-                    className="py-2 px-3 max-w-md truncate"
+                    className="py-1.5 px-2 max-w-[260px] truncate"
                     title={t.description}
                   >
-                    <span className="inline-flex items-center gap-1.5">
+                    <span className="inline-flex items-center gap-1">
                       {t.description}
                       {t.is_internal && (
-                        <Badge variant="outline" className="text-[10px] px-1 py-0 border-amber-400 text-amber-700 font-normal shrink-0">
-                          interno
+                        <Badge variant="outline" className="text-[9px] px-0.5 py-0 border-amber-400 text-amber-700 font-normal shrink-0">
+                          int
                         </Badge>
                       )}
                     </span>
                   </td>
-                  <td className="py-2 px-3 text-muted-foreground text-xs">
+                  <td className="py-1.5 px-2 text-muted-foreground text-xs">
                     {t.doc}
                   </td>
-                  <td className="py-2 px-3 text-right whitespace-nowrap text-green-700 font-mono text-xs">
+                  <td className="py-1.5 px-2 text-right whitespace-nowrap text-green-700 font-mono text-xs">
                     {formatBRL(t.credit)}
                   </td>
-                  <td className="py-2 px-3 text-right whitespace-nowrap text-red-700 font-mono text-xs">
+                  <td className="py-1.5 px-2 text-right whitespace-nowrap text-red-700 font-mono text-xs">
                     {formatBRL(t.debit)}
                   </td>
-                  <td className="py-2 px-3 text-right whitespace-nowrap font-mono text-xs">
+                  <td className="py-1.5 px-2 text-right whitespace-nowrap font-mono text-xs">
                     {formatBRL(t.balance)}
                   </td>
-                  <td className="py-2 px-3 text-xs text-muted-foreground">
+                  <td className="py-1.5 px-2 text-xs text-muted-foreground">
                     {t.account}
                   </td>
-                  <td className="py-2 px-3">
+                  <td className="py-1.5 px-2">
                     <div className="flex items-center gap-1">
                       <Badge variant="secondary" className="text-xs">
                         {t.bank}
@@ -1126,7 +1128,7 @@ function MainScreen({ onSwitchDB }: { onSwitchDB: () => void }) {
 
       {/* Pagination */}
       {totalPages > 1 && (
-        <footer className="border-t bg-white px-6 py-3 flex items-center justify-between">
+        <footer className="border-t bg-white px-4 py-2 flex items-center justify-between">
           <span className="text-sm text-muted-foreground">
             Página {page + 1} de {totalPages}
           </span>
