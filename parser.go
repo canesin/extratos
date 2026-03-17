@@ -22,9 +22,9 @@ import (
 )
 
 var (
-	dateRE2   = regexp.MustCompile(`^(\d{2}/\d{2}/\d{2});`)
-	dateRE4   = regexp.MustCompile(`^(\d{2}/\d{2}/\d{4});`)
-	headerRE  = regexp.MustCompile(`^Extrato de: Ag: (\d+) \| Conta: ([\d-]+) \| Entre`)
+	dateRE2    = regexp.MustCompile(`^(\d{2}/\d{2}/\d{2});`)
+	dateRE4    = regexp.MustCompile(`^(\d{2}/\d{2}/\d{4});`)
+	headerRE   = regexp.MustCompile(`^Extrato de: Ag: (\d+) \| Conta: ([\d-]+) \| Entre`)
 	itauDateRE = regexp.MustCompile(`^(\d{2}/\d{2}/\d{4})`)
 )
 
