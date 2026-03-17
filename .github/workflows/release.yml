@@ -57,8 +57,10 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Install NSIS
-        run: sudo apt-get update && sudo apt-get install -y nsis
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev nsis
 
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.74
@@ -107,20 +109,21 @@ jobs:
 
       - name: Create .pkg installer
         run: |
+          VERSION="${GITHUB_REF_NAME#v}"
           mkdir -p pkg-root/Applications
           cp -R bin/extratos-app.app pkg-root/Applications/Extratos.app
           pkgbuild \
             --root pkg-root \
             --identifier "com.canesin.extratos" \
-            --version "1.0.0" \
+            --version "${VERSION}" \
             --install-location "/" \
-            bin/extratos-app-universal.pkg
+            bin/extratos-macos-universal.pkg
 
       - name: Upload .pkg
         uses: actions/upload-artifact@v4
         with:
           name: extratos-macos-universal
-          path: bin/extratos-app-universal.pkg
+          path: bin/extratos-macos-universal.pkg
 
   release:
     needs: [build-linux, build-windows, build-macos]
@@ -141,7 +144,7 @@ jobs:
           # Windows installer
           cp extratos-windows-amd64/*-installer.exe extratos-windows-amd64-installer.exe
           # macOS
-          cp extratos-macos-universal/extratos-app-universal.pkg extratos-macos-universal.pkg
+          cp extratos-macos-universal/extratos-macos-universal.pkg extratos-macos-universal.pkg
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
