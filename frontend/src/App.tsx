@@ -14,6 +14,8 @@ import { Badge } from "@/components/ui/badge";
 import { formatBRL } from "@/lib/utils";
 import { sortTransactions, type SortKey, type SortDir } from "@/lib/sort";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
+import brandIcon from "@/assets/branding/extratos-icon.svg";
+import brandLogo from "@/assets/branding/extratos-logo.svg";
 
 interface Stats {
   total_transactions: number;
@@ -106,8 +108,12 @@ function DBSelectScreen({ onOpen }: { onOpen: () => void }) {
     <div className="min-h-screen flex items-center justify-center bg-muted/30">
       <div className="w-full max-w-lg mx-4">
         <div className="text-center mb-8">
-          <h1 className="text-2xl font-bold text-foreground">Extratos</h1>
-          <p className="text-sm text-muted-foreground mt-1">
+          <img
+            src={brandLogo}
+            alt="Extratos"
+            className="mx-auto h-auto w-full max-w-[320px]"
+          />
+          <p className="text-sm text-muted-foreground mt-4">
             Selecione ou crie um banco de dados
           </p>
         </div>
@@ -745,6 +751,7 @@ function MainScreen({ onSwitchDB }: { onSwitchDB: () => void }) {
         <div className="flex items-center justify-between">
           <div>
             <div className="flex items-center gap-2">
+              <img src={brandIcon} alt="" className="h-9 w-9 rounded-xl" />
               <h1 className="text-xl font-bold text-foreground">Extratos</h1>
               <button
                 onClick={onSwitchDB}
