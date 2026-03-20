@@ -108,9 +108,10 @@ function DBSelectScreen({ onOpen }: { onOpen: () => void }) {
     <div className="min-h-screen flex items-center justify-center bg-muted/30">
       <div className="w-full max-w-lg mx-4">
         <div className="text-center mb-8">
+          <h1 className="sr-only">Extratos</h1>
           <img
             src={brandLogo}
-            alt="Extratos"
+            alt=""
             className="mx-auto h-auto w-full max-w-[320px]"
           />
           <p className="text-sm text-muted-foreground mt-4">
