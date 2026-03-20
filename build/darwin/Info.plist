@@ -4,11 +4,11 @@
         <key>CFBundlePackageType</key>
             <string>APPL</string>
         <key>CFBundleName</key>
-            <string>My Product</string>
+            <string>Extratos</string>
         <key>CFBundleExecutable</key>
-            <string>v3ref</string>
+            <string>extratos-app</string>
         <key>CFBundleIdentifier</key>
-            <string>com.example.v3ref</string>
+            <string>com.canesin.extratos</string>
         <key>CFBundleVersion</key>
             <string>0.1.0</string>
         <key>CFBundleGetInfoString</key>
