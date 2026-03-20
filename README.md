@@ -1,8 +1,19 @@
-# Extratos
+<p align="center">
+  <img src="docs/logo.svg" alt="Extratos" width="560">
+</p>
 
-Desktop app for importing, searching, and analyzing Brazilian bank statements (extratos bancários).
+<p align="center">
+  Desktop app for importing, searching, and analyzing Brazilian bank statements.
+</p>
+
+<p align="center">
+  <a href="https://canesin.github.io/extratos/">Website</a> ·
+  <a href="https://github.com/canesin/extratos/releases/latest">Latest Release</a>
+</p>
 
 Built with [Wails v3](https://wails.io/) (Go + React/TypeScript + shadcn/ui).
+
+![Extratos screenshot](docs/screenshot.png)
 
 ## Features
 
