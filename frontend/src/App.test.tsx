@@ -45,7 +45,10 @@ import App from "./App";
 describe("App", () => {
   it("renders DB selection screen initially", async () => {
     render(<App />);
-    // The DB selection screen should show the "create new database" input
+
+    expect(
+      await screen.findByRole("heading", { name: "Extratos", level: 1 })
+    ).toBeInTheDocument();
     expect(
       await screen.findByPlaceholderText(/Nome \(ex: Empresa X, Pessoal\)/)
     ).toBeInTheDocument();
